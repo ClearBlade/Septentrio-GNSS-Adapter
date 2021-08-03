@@ -24,6 +24,17 @@ import (
 	"go.bug.st/serial"
 )
 
+//TODO
+//
+// 1. Implement read timeout for serial and tcp
+// 2. Implement publish of sbf data - need to figure out how to pass adapter settings to sbf
+// 3. Implement handling of prompts
+// 4. Implement handling of ASCII command reply data
+// 5. Implement handling of ASCII Display data
+// 6. Implement handling of event data
+// 7. Implement handling of formatted information block data
+// 8. Implement parsing of remaining sbf blocks
+
 const (
 	adapterName                    = "septentrio-gnss-adapter"
 	platURL                        = "http://localhost:9000"
@@ -43,7 +54,6 @@ var (
 	messagingURL            string //Defaults to localhost:1883
 	sysKey                  string
 	sysSec                  string
-	deviceName              string //Defaults to xDotSerialAdapter
 	activeKey               string
 	logLevel                string //Defaults to info
 	adapterConfigCollection string

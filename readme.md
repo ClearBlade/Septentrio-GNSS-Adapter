@@ -31,18 +31,46 @@ The adapter_settings column will need to contain a JSON object containing the fo
 ##### connectionType
 * Either __serial__ or __tcp__
 
+##### host
+* The TCP/IP hostname where the Septentrio GNSS serial device resides (ex. localhost, 127.0.0.1)
+* Required if __connectionType__ is specified as tcp
 
+##### port
+* The TCP port to the Septentrio GNSS serial device (ex. /dev/ttyACM0)
+* Required if __connectionType__ is specified as _tcp_
+* 28784 is the factory default
 
-##### serialPortName
-* The full unix path to the xDot serial device (ex. /dev/ttyAP1)
+##### serialPort
+* The full linux path to the Septentrio GNSS serial device (ex. /dev/ttyACM0)
+* Required if __connectionType__ is specified as _serial_
 
-##### transmissionDataRate
-* DR0-DR15 can be used
-* See https://www.multitech.com/documents/publications/manuals/s000643.pdf for further information
+##### baudRate
+* The data rate utilized by the Septentrio GNSS serial port
+* Only used if __connectionType__ is specified as _serial_
+* 75, 110, 300, 1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200, etc.
+* Optional - defaults to 115200
 
-##### transmissionFrequency
-* The transmit frequency to use in peer-to-peer mode
-* Use 915.5-919.7 MhZ for US 915 devices to avoid interference with LoRaWAN networks
+##### parity
+* The error detection method utilized by the serial port
+* Only used if __connectionType__ is specified as _serial_
+* Valid values are __none__, __odd__, __even__, __mark__, and __space__
+* Optional - defaults to __none__
+
+##### dataBits
+* The number of data bits in each character
+* Only used if __connectionType__ is specified as _serial_
+* Valid values are __5__, __6__, __7__, __8__, and __9__
+* Optional - defaults to __8__
+
+##### stopBits
+* The number of stop bits transmitted at the end of each character
+* Only used if __connectionType__ is specified as _serial_
+* Valid values are __1__, __1.5__, and __2__
+* Optional - defaults to __1__
+
+##### readTimeout
+* The number of seconds to wait before terminating a read when no data is available
+
 
 #### adapter_settings_examples
 
@@ -50,7 +78,8 @@ The adapter_settings column will need to contain a JSON object containing the fo
 {  
   "connectionType": "tcp",
   "host": "localhost",
-  "tcpPort": 28784
+  "tcpPort": 28784,
+  "readTimeout": 1 //Number of seconds
 }
 
 ##### Serial connection type example
@@ -58,8 +87,8 @@ The adapter_settings column will need to contain a JSON object containing the fo
 
 {  
   "connectionType": "serial"
-  "serialPort":"/dev/ttyAP1", 
-  "baudRate": 115200, //75, 110, 300, 1200, 2400, 4800, 9600, 19200, 38400, 57600 and 115200 - default value is 115200
+  "serialPort":"/dev/ttyACM0", 
+  "baudRate": 115200, //75, 110, 300, 1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200, etc. - default value is 115200
   "dataBits": 8, //5, 6, 7, 8, 9 - default value is 8
   "parity": "none", //none|odd|even|mark|space - default value is none
   "stopBits": 1, //1, 1.5, 2 - default value is 1
@@ -86,7 +115,7 @@ The adapter_settings column will need to contain a JSON object containing the fo
   * The device name the adapter will use to authenticate to the ClearBlade Platform
   * Requires the device to have been defined in the _Auth - Devices_ collection within the ClearBlade Platform __System__
   * OPTIONAL
-  * Defaults to __xDotSerialAdapter__
+  * Defaults to __septentrio-gnss-adapter__
    
    __password__
   * REQUIRED
@@ -121,17 +150,18 @@ The adapter_settings column will need to contain a JSON object containing the fo
 
 ## Setup
 ---
-The xdot adapters are dependent upon the ClearBlade Go SDK and its dependent libraries being installed. The xDot adapter was written in Go and therefore requires Go to be installed (https://golang.org/doc/install).
+The Septentrio GNSS adapter is dependent upon the ClearBlade Go SDK and its dependent libraries being installed. The Septentrio GNSS adapter adapter was written in Go and therefore requires Go to be installed (https://golang.org/doc/install).
 
 
 ### Adapter compilation
-In order to compile the adapter for execution within mLinux, the following steps need to be performed:
+In order to compile the adapter for execution within linux, the following steps need to be performed:
 
  1. Retrieve the adapter source code  
-    * ```git clone git@github.com:ClearBlade/xDot-Adapter.git```
- 2. Navigate to the xdotadapter directory  
-    * ```cd xdotadapter```
+    * ```git clone git@github.com:ClearBlade/Septentrio-GNSS-Adapter.git```
+ 2. Navigate to the adapter directory  
+    * ```cd Septentrio-GNSS-Adapter```
  4. Compile the adapter
+    * ```GOARCH=arm64 GOOS=linux go build```
     * ```GOARCH=arm GOARM=5 GOOS=linux go build```
 
 
