@@ -20,7 +20,7 @@ const maxEventSize = 256
 var hasPrompt bool = false
 
 //Taken from parse function in ssnrx.cpp
-func Parse(buffer *[]byte) []interface{} {
+func Parse(buffer *[]byte, payloads *[]map[string]interface{}) {
 	done := false
 	for !done {
 		// We are looking for either
@@ -39,10 +39,10 @@ func Parse(buffer *[]byte) []interface{} {
 		if ndx < bufferSize {
 			if (*buffer)[ndx] == '>' {
 				// '>' terminates a prompt
-				done = handleCommandPrompt(buffer, ndx)
+				done = handleCommandPrompt(buffer, ndx, payloads)
 			} else {
 				// '$' was found
-				done = handleReceivedData(buffer, ndx)
+				done = handleReceivedData(buffer, ndx, payloads)
 			}
 		} else {
 			// We've reached the end of the buffer with nothing found. Discard all data,
@@ -58,9 +58,8 @@ func Parse(buffer *[]byte) []interface{} {
 	}
 }
 
-func handleCommandPrompt(buffer *[]byte, ndx int) (bool, []interface{}) {
+func handleCommandPrompt(buffer *[]byte, ndx int, payloads *[]map[string]interface{}) bool {
 	var prompt []byte
-	payloads := []interface{}{}
 
 	//See if we have enough characters to qualify for a prompt
 	if ndx+1 >= promptLength {
@@ -84,12 +83,10 @@ func handleCommandPrompt(buffer *[]byte, ndx int) (bool, []interface{}) {
 	}
 	log.Printf("[DEBUG] parse - Removing prompt from buffer: %s\n", string(prompt))
 	*buffer = append((*buffer)[:ndx-promptLength], (*buffer)[ndx+1:]...)
-	return false, payloads
+	return false
 }
 
-func handleReceivedData(buffer *[]byte, ndx int) (bool, []interface{}) {
-	payloads := []interface{}{}
-
+func handleReceivedData(buffer *[]byte, ndx int, payloads *[]map[string]interface{}) bool {
 	if ndx > 0 {
 		*buffer = (*buffer)[ndx:]
 	}
@@ -99,21 +96,21 @@ func handleReceivedData(buffer *[]byte, ndx int) (bool, []interface{}) {
 			processedBytes := 0
 
 			if (*buffer)[1] == '@' {
-				processedBytes, notEnoughData = parseSBF(buffer, 0)
+				processedBytes, notEnoughData = parseSBF(buffer, 0, payloads)
 			} else if (*buffer)[1] == 'R' {
-				processedBytes, notEnoughData = parseASCIICommandReply(buffer, 0)
+				processedBytes, notEnoughData = parseASCIICommandReply(buffer, 0, payloads)
 			} else if (*buffer)[1] == 'T' {
 				if len(*buffer) < 3 {
 					notEnoughData = true
 				} else {
 					if (*buffer)[2] == 'D' {
-						processedBytes, notEnoughData = parseASCIIDisplay(buffer, 0)
+						processedBytes, notEnoughData = parseASCIIDisplay(buffer, 0, payloads)
 					} else if (*buffer)[2] == 'E' {
-						processedBytes, notEnoughData = parseEvent(buffer, 0)
+						processedBytes, notEnoughData = parseEvent(buffer, 0, payloads)
 					}
 				}
 			} else if (*buffer)[1] == '-' {
-				processedBytes, notEnoughData = parseFormattedInformationBlock(buffer, 0)
+				processedBytes, notEnoughData = parseFormattedInformationBlock(buffer, 0, payloads)
 			}
 
 			if processedBytes > 0 {
@@ -122,7 +119,7 @@ func handleReceivedData(buffer *[]byte, ndx int) (bool, []interface{}) {
 				if notEnoughData {
 					// the buffer does not yet contain enough data to parse the message
 					// so we return control, and parsing will be re-attempted upon receiving more data
-					return true, payloads
+					return true
 				} else {
 					// an error has occured when trying to parse the message
 					*buffer = (*buffer)[2:]
@@ -132,15 +129,15 @@ func handleReceivedData(buffer *[]byte, ndx int) (bool, []interface{}) {
 		} else {
 			*buffer = (*buffer)[1:]
 		}
-		return false, payloads
+		return false
 	} else {
 		// the '$' was not followed yet by a byte indicating the type of message
 		// so we return control, and parsing will be reattempted upon receiving more data
-		return true, payloads
+		return true
 	}
 }
 
-func parseSBF(buffer *[]byte, ndx int) (int, bool) {
+func parseSBF(buffer *[]byte, ndx int, payloads *[]map[string]interface{}) (int, bool) {
 	bufferSize := len(*buffer)
 	notEnoughData := false
 
@@ -180,7 +177,7 @@ func parseSBF(buffer *[]byte, ndx int) (int, bool) {
 	return int(length), notEnoughData
 }
 
-func parseASCIICommandReply(buffer *[]byte, ndx int) (int, bool) {
+func parseASCIICommandReply(buffer *[]byte, ndx int, payloads *[]map[string]interface{}) (int, bool) {
 	notEnoughData := false
 	if string((*buffer)[ndx:ndx+2]) != "$R" {
 		return -1, notEnoughData
@@ -214,7 +211,7 @@ func parseASCIICommandReply(buffer *[]byte, ndx int) (int, bool) {
 	// }
 }
 
-func parseASCIIDisplay(buffer *[]byte, ndx int) (int, bool) {
+func parseASCIIDisplay(buffer *[]byte, ndx int, payloads *[]map[string]interface{}) (int, bool) {
 	notEnoughData := false
 	if len(*buffer)-ndx < 3 {
 		notEnoughData = true
@@ -244,7 +241,7 @@ func parseASCIIDisplay(buffer *[]byte, ndx int) (int, bool) {
 	}
 }
 
-func parseEvent(buffer *[]byte, ndx int) (int, bool) {
+func parseEvent(buffer *[]byte, ndx int, payloads *[]map[string]interface{}) (int, bool) {
 	notEnoughData := false
 	if len(*buffer)-ndx < 3 {
 		notEnoughData = true
@@ -273,7 +270,7 @@ func parseEvent(buffer *[]byte, ndx int) (int, bool) {
 	}
 }
 
-func parseFormattedInformationBlock(buffer *[]byte, ndx int) (int, bool) {
+func parseFormattedInformationBlock(buffer *[]byte, ndx int, payloads *[]map[string]interface{}) (int, bool) {
 	notEnoughData := false
 	// mHasPrompt = false;
 	// mPromptTimer.start(); // restart timer (from zero again)
@@ -330,6 +327,17 @@ func parseFormattedInformationBlock(buffer *[]byte, ndx int) (int, bool) {
 }
 
 func handleSbfBlock(buffer []byte) {
+	// All parsed SBF blocks should have the following
+	// JSON structure:
+	//
+	// {
+	// 	 "recordType": "rfStatus",
+	//	 "recordID": 9999,
+	// 	 "data": {
+	//     Data specific to SBF block
+	//   },
+	// }
+	//
 	//Parse the SBF ID
 	sbfID := uint16(buffer[4])<<8 + uint16(buffer[5])
 

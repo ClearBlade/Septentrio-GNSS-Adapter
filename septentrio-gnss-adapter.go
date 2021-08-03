@@ -1,12 +1,6 @@
 package main
 
 import (
-	// 	"bytes"
-	// 	"math/rand"
-	// 	"os/exec"
-	// 	"sync"
-	// 	"time"
-
 	"encoding/json"
 	"fmt"
 	"log"
@@ -15,6 +9,7 @@ import (
 	"os/signal"
 	"strconv"
 	"syscall"
+	"time"
 
 	sbf "Septentrio-GNSS-Adapter/sbf"
 
@@ -26,49 +21,29 @@ import (
 
 //TODO
 //
-// 1. Implement read timeout for serial and tcp
-// 2. Implement publish of sbf data - need to figure out how to pass adapter settings to sbf
-// 3. Implement handling of prompts
-// 4. Implement handling of ASCII command reply data
-// 5. Implement handling of ASCII Display data
-// 6. Implement handling of event data
-// 7. Implement handling of formatted information block data
-// 8. Implement parsing of remaining sbf blocks
+// 1. IN PROGRESS - Implement read timeout for serial and tcp
+// 2. Implement handling of prompts
+// 3. Implement handling of ASCII command reply data
+// 4. Implement handling of ASCII Display data
+// 5. Implement handling of event data
+// 6. Implement handling of formatted information block data
+// 7. Implement parsing of remaining sbf blocks
+// 8. Implement handling of commands published to adapter
 
 const (
-	adapterName                    = "septentrio-gnss-adapter"
-	platURL                        = "http://localhost:9000"
-	messURL                        = "localhost:1883"
-	msgSubscribeQos                = 0
-	msgPublishQos                  = 0
-	portRead                       = "receive"
-	portWrite                      = "send"
-	adapterConfigCollectionDefault = "adapter_config"
+	adapterName      = "septentrio-gnss-adapter"
+	portWriteRequest = "request"
+	portDataReceived = "receive"
 )
 
 var (
-	adapterConfig   *adapter_library.AdapterConfig
-	adapterSettings *SeptentrioGNSSAdapterSettings
-
-	platformURL             string //Defaults to http://localhost:9000
-	messagingURL            string //Defaults to localhost:1883
-	sysKey                  string
-	sysSec                  string
-	activeKey               string
-	logLevel                string //Defaults to info
-	adapterConfigCollection string
-	readInterval            int
-	readTimeout             int
-
-	serialPortName = ""
-
-	topicRoot = "wayside/lora"
-
-	cbSubscribeChannel <-chan *mqttTypes.Publish
-	endWorkersChannel  chan string
-
-	port   interface{}
-	buffer []byte
+	adapterConfig     *adapter_library.AdapterConfig
+	adapterSettings   *SeptentrioGNSSAdapterSettings
+	publishTopic      string
+	endWorkersChannel chan string
+	port              interface{}
+	buffer            []byte //Buffer containing all serial/tcp data waiting to be processed
+	parsingIsRunning  bool
 )
 
 func main() {
@@ -90,9 +65,11 @@ func main() {
 		log.Fatalf("[FATAL] Failed to parse Adapter Settings %s\n", err.Error())
 	}
 
+	publishTopic = adapterConfig.TopicRoot + "/" + portDataReceived
+
 	validateAdapterSettings()
 
-	err = adapter_library.ConnectMQTT(adapterConfig.TopicRoot+"/#", cbMessageHandler)
+	err = adapter_library.ConnectMQTT(adapterConfig.TopicRoot+"/"+portWriteRequest, cbMessageHandler)
 	if err != nil {
 		log.Fatalf("[FATAL] Failed to connect MQTT: %s\n", err.Error())
 	}
@@ -112,13 +89,6 @@ func main() {
 
 	//End the existing goRoutines
 	endWorkersChannel <- "Stop Channel"
-	endWorkersChannel <- "Stop Channel"
-
-	//stop serial data mode when adapter is killed
-	// log.Println("[INFO] Stopping Serial Data Mode...")
-	// if err := serialPort.StopSerialDataMode(); err != nil {
-	// 	log.Println("[WARN] initCbClient - Error stopping serial data mode: " + err.Error())
-	// }
 
 	os.Exit(0)
 }
@@ -221,116 +191,135 @@ func getSerialMode() *serial.Mode {
 
 func readWorker() {
 	log.Println("[INFO] readWorker - Starting readWorker")
+	var err error
+	var n int
+
+	//Open the serial port or tcp connection
 	if adapterSettings.ConnectionType == "serial" {
-		readFromSerialPort()
+		err = createSerialPort()
 	} else if adapterSettings.ConnectionType == "tcp" {
-		readFromTcpPort()
+		err = createTcpPort()
+	}
+
+	if err != nil {
+		log.Fatalf("[FATAL] readWorker - Error creating connection to GNSS receiver: %s\n", err.Error())
+	}
+
+	//Ensure we close the serial port or tcp connection when we exit
+	defer func() {
+		if adapterSettings.ConnectionType == "serial" {
+			port.(serial.Port).Close()
+		} else {
+			port.(net.Conn).Close()
+		}
+	}()
+
+	for {
+		select {
+		case <-endWorkersChannel:
+			log.Println("[DEBUG] readWorker - stopping read worker")
+			return
+		default:
+			buff := make([]byte, 4096)
+
+			//Read from the serial port or tcp connection
+			if adapterSettings.ConnectionType == "serial" {
+				n, err = port.(serial.Port).Read(buff)
+			} else {
+				n, err = port.(net.Conn).Read(buff)
+			}
+
+			if err != nil {
+				//TODO - Should we exit with a fatal error?
+				//TODO - Need to see if we get EOF errors
+				log.Printf("[ERROR] readWorker - Error reading from %s port on GNSS Receiver: %s\n", adapterSettings.ConnectionType, err.Error())
+			} else {
+				if n > 0 {
+					log.Printf("[DEBUG] readFromSerialPort - %d bytes read from serial port\n", n)
+					log.Printf("[DEBUG] %v\n", buff[:n])
+					buffer = append(buffer, buff[:n]...)
+					parseAndPublishPayloads()
+				}
+			}
+		}
+	}
+}
+
+func parseAndPublishPayloads() {
+	parsedPayloads := []map[string]interface{}{}
+
+	//We need to ensure that we only have 1 instance of the parsing goroutine
+	//running at any one time
+	parsingIsRunning = true
+	if !parsingIsRunning {
+		parsingIsRunning = true
+
+		log.Println("[DEBUG] parseAndPublishPayloads - Begin parsing")
+		go func() {
+			sbf.Parse(&buffer, &parsedPayloads)
+
+			//Only attempt to publish if we actually have payloads to publish
+			if len(parsedPayloads) > 0 {
+				publishPayloads(&parsedPayloads)
+				parsedPayloads = nil
+			}
+			parsingIsRunning = false
+		}()
+	} else {
+		log.Println("[DEBUG] parseAndPublishPayloads - Parsing is already being executed")
 	}
 }
 
 // Publishes data to a topic
-func publish(topic string, data interface{}) {
-	b, err := json.Marshal(data)
-	if err != nil {
-		log.Printf("[ERROR] Failed to stringify JSON: %s\n", err.Error())
-		return
-	}
+func publishPayloads(payloads *[]map[string]interface{}) {
 
-	log.Printf("[DEBUG] publish - Publishing to topic %s\n", topic)
-	err = adapter_library.Publish(topic, b)
-	if err != nil {
-		log.Printf("[ERROR] Failed to publish MQTT message to topic %s: %s\n", topic, err.Error())
+	for _, payload := range *payloads {
+		jsonStr, err := json.Marshal(payload)
+		if err != nil {
+			log.Printf("[ERROR] Failed to marshall JSON %v: %s\n", payload, err.Error())
+		} else {
+			log.Printf("[DEBUG] publish - Publishing JSON %s to topic %s\n", jsonStr, publishTopic)
+			err = adapter_library.Publish(publishTopic, jsonStr)
+			if err != nil {
+				log.Printf("[ERROR] Failed to publish MQTT message to topic: %s\n", err.Error())
+			}
+		}
 	}
 }
 
-func readFromSerialPort() {
-
+func createSerialPort() error {
 	var err error
 	port, err = serial.Open(adapterSettings.SerialPort, getSerialMode())
 	if err != nil {
-		log.Fatalf("[ERROR] readFromSerialPort - Error opening serial port: %s\n", err.Error())
-		return
+		log.Printf("[ERROR] createSerialPort - Error opening serial port %s: %s\n", adapterSettings.SerialPort, err.Error())
+		return err
 	}
 
-	defer port.(serial.Port).Close()
-
-	for {
-		select {
-		case <-endWorkersChannel:
-			log.Println("[DEBUG] readWorker - stopping serial read worker")
-			return
-		default:
-			buff := make([]byte, 4096)
-
-			n, err := port.(serial.Port).Read(buff)
-			if err != nil {
-				log.Printf("[ERROR] readFromSerialPort - Error reading from serial port: %s\n", err.Error())
-			}
-			if n > 0 {
-				log.Printf("[DEBUG] readFromSerialPort - %d bytes read from serial port\n", n)
-				log.Printf("[DEBUG] %v\n", buff[:n])
-
-				buffer = append(buffer, buff[:n]...)
-
-				sbf.Parse(&buffer)
-			}
-		}
+	log.Printf("[DEBUG] createSerialPort - Serial port %s opened\n", adapterSettings.SerialPort)
+	if adapterSettings.Timeout > 0 {
+		port.(serial.Port).SetReadTimeout(time.Duration(adapterSettings.Timeout) * time.Second)
+		log.Printf("[DEBUG] createSerialPort - Serial port read timeout set to %d seconds\n", adapterSettings.Timeout)
 	}
-
-	// data, err := serialPort.ReadSerialPort()
-
-	// if err != nil && err != io.EOF {
-	// 	log.Printf("[ERROR] readFromSerialPort - ERROR reading from serial port: %s\n", err.Error())
-	// } else {
-	// 	if data != "" {
-	// 		//If there are any slashes in the data, we need to escape them so duktape
-	// 		//doesn't throw a SyntaxError: unterminated string (line 1) error
-	// 		data = strings.Replace(data, `\`, `\\`, -1)
-
-	// 		log.Printf("[INFO] readFromSerialPort - Data read from serial port: %s\n", data)
-
-	// 		//Publish data to message broker
-	// 		err := publish(topicRoot+"/"+serialRead+"/response", data)
-	// 		if err != nil {
-	// 			log.Printf("[ERROR] readFromSerialPort - ERROR publishing to topic: %s\n", err.Error())
-	// 		}
-	// 	} else {
-	// 		log.Println("[DEBUG] readFromSerialPort - No data read from serial port, skipping publish.")
-	// 	}
-	// }
+	return nil
 }
 
-func readFromTcpPort() {
+func createTcpPort() error {
 	var err error
-	port, err = net.Dial("tcp", adapterSettings.TcpHost+":"+strconv.Itoa(adapterSettings.TcpPort))
+	addr := adapterSettings.TcpHost + ":" + strconv.Itoa(adapterSettings.TcpPort)
+
+	port, err = net.Dial("tcp", addr)
 	if err != nil {
-		log.Fatalf("[ERROR] readFromTcpPort - Error opening tcp port: %s\n", err.Error())
-		return
+		log.Printf("[ERROR] createTcpPort - Error opening tcp port %s: %s\n", addr, err.Error())
+		return err
 	}
 
-	defer port.(net.Conn).Close()
+	log.Printf("[DEBUG] createSerialPort - TCP port %s opened\n", addr)
 
-	for {
-		select {
-		case <-endWorkersChannel:
-			log.Println("[DEBUG] readFromTcpPort - stopping tcp read worker")
-			return
-		default:
-			buff := make([]byte, 4096)
-
-			n, err := port.(net.Conn).Read(buff)
-			if err != nil {
-				log.Printf("[ERROR] readFromTcpPort - Error reading from tcp port: %s\n", err.Error())
-			}
-			if n > 0 {
-				log.Printf("[DEBUG] readFromTcpPort - %d bytes read from tcp port\n", n)
-				log.Printf("[DEBUG] %v\n", buff[:n])
-
-				buffer = append(buffer, buff[:n]...)
-				sbf.Parse(&buffer)
-			}
-		}
+	if adapterSettings.Timeout > 0 {
+		port.(net.Conn).SetReadDeadline(time.Now().Add(time.Duration(adapterSettings.Timeout) * time.Second))
+		log.Printf("[DEBUG] createSerialPort - TCP read timeout set to %d seconds\n", adapterSettings.Timeout)
 	}
+	return nil
 }
 
 func writeToPort(payload []byte) {
