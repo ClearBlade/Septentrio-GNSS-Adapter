@@ -1,6 +1,8 @@
 package sbf
 
 import (
+	"bytes"
+	"encoding/binary"
 	"log"
 	"regexp"
 	"strings"
@@ -821,5 +823,85 @@ func handleSbfBlock(buffer []byte) {
 }
 
 func handleRFStatus(buffer []byte) {
+	// /** RFStatus_1_0_t */
+	// type RFStatus_1_0_t struct {
+	// 	Header BlockHeader_t
 
+	// 	/* Time Header */
+	// 	TOW uint32
+	// 	WNc uint16
+
+	// 	N        uint8
+	// 	SBLength uint8
+	// 	Flags    uint8
+	// 	Reserved [3]uint8
+	// 	RFBand   [SBF_RFSTATUS_1_0_RFBAND_LENGTH]RFBand_1_0_t
+	// }
+
+	// type RFBand_1_t RFBand_1_0_t
+	// type RFStatus_1_t RFStatus_1_0_t
+
+	response := map[string]interface{}{
+		"recordType": "rfStatus",
+		"data": map[string]interface{},
+	}
+
+	blockBuffer := bytes.NewReader(buffer)
+	var rfStatus RFStatus_1_t
+	binary.Read(blockBuffer, binary.LittleEndian, &rfStatus)
+
+	//Process the data in the RFStatus_1_t struct
+	response["recordType"] = "rfStatus"
+	response["data"] = map[string]interface{}{}
+	response["data"]["numberOfBands"] = rfStatus.N
+	response["data"]["rfBands"] = [rfStatus.N]map[string]interface{}{}
+	
+	if rfStatus.Flags & (1<<7) != 0 {
+		response["data"]["spoofingSuspected"] = true
+	}
+
+	//Process each sub-block
+	for ndx = 0; ndx < rfStatus.N; ndx++ {
+
+		response["data"]["rfBands"][ndx] = map[string]interface{}{
+			"frequency": rfStatus.RFBand[ndx].Frequency,
+			"bandwidth": rfStatus.RFBand[ndx].Bandwidth,
+			"info": {},
+		}
+
+		//Parse info flags
+		//bit 0
+		if rfStatus.RFBand[ndx].Info & 1 != 0 {
+			response["data"]["rfBands"][ndx]["info"]["suppressedByNotchFilter"] = true
+		} else {
+			response["data"]["rfBands"][ndx]["info"]["suppressedByNotchFilter"] = false
+		}
+
+		//bit 1
+		if rfStatus.RFBand[ndx].Info & (1<<1) != 0 {
+			response["data"]["rfBands"][ndx]["info"]["interferenceCancelled"] = true
+		} else {
+			response["data"]["rfBands"][ndx]["info"]["interferenceCancelled"] = false
+		}
+
+		//bit 2
+		if rfStatus.RFBand[ndx].Info & (1<<2) != 0 {
+			response["data"]["rfBands"][ndx]["info"]["interferenceDetected"] = true
+		} else {
+			response["data"]["rfBands"][ndx]["info"]["interferenceDetected"] = false
+		}
+
+		//Antenna ID: bits 6 and 7
+			response["data"]["rfBands"][ndx]["info"]["antennaID"] = rfStatus.RFBand[ndx].Info >> 6
+
+	// /** RFBand_1_0_t */
+	// type RFBand_1_0_t struct {
+	// 	Frequency uint32
+	// 	Bandwidth uint16
+	// 	Info      uint8
+
+	// 	_padding [SBF_RFBAND_1_0__PADDING_LENGTH]uint8
+	// }
+
+	}
 }
