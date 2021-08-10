@@ -144,11 +144,11 @@ func validateAdapterSettings() {
 	} else if adapterSettings.ConnectionType == "tcp" {
 		//Validate tcp fields
 		if adapterSettings.TcpHost == "" {
-			log.Fatal("[FATAL] host is required in adapter settings when connection type is set to 'serial'\n")
+			log.Fatal("[FATAL] host is required in adapter settings when connection type is set to 'tcp'\n")
 		}
 
 		if adapterSettings.TcpPort == 0 {
-			log.Fatal("[FATAL] port is required in adapter settings when connection type is set to 'serial'\n")
+			log.Fatal("[FATAL] port is required in adapter settings when connection type is set to 'tcp'\n")
 		}
 	}
 }
