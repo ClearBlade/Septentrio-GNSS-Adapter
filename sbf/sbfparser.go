@@ -17,7 +17,7 @@ const maxFormattedInformationBlockSize = 4096
 const maxASCIICommandReplySize = 4096
 const maxEventSize = 256
 
-var hasPrompt bool = false
+//var hasPrompt bool = false
 
 //Taken from parse function in ssnrx.cpp
 func Parse(buffer *[]byte, payloads *[]map[string]interface{}) {
@@ -58,6 +58,7 @@ func Parse(buffer *[]byte, payloads *[]map[string]interface{}) {
 	}
 }
 
+//TODO - Finish implementation
 func handleCommandPrompt(buffer *[]byte, ndx int, payloads *[]map[string]interface{}) bool {
 	var prompt []byte
 
@@ -177,40 +178,78 @@ func parseSBF(buffer *[]byte, ndx int, payloads *[]map[string]interface{}) (int,
 	return int(length), notEnoughData
 }
 
+//TODO - Finish implementation
 func parseASCIICommandReply(buffer *[]byte, ndx int, payloads *[]map[string]interface{}) (int, bool) {
 	notEnoughData := false
 	if string((*buffer)[ndx:ndx+2]) != "$R" {
 		return -1, notEnoughData
 	}
-	// mPromptTimer.start();  // restart timer (from zero again)
-	// mHasPrompt = false;
-	// int endIndex = searchEndOfAsciiMessage(startIndex, sMaxASCIICommandReplySize, outNotEnoughData);
-	// if (endIndex != -1) {
-	//   QString prompt = mBuffer.mid(endIndex - sPromptLength, sPromptLength);
-	//   bool error = (mBuffer.at(startIndex + 2) == '?');
-	//   emit newCommandReply(mBuffer.mid(startIndex, endIndex - startIndex - prompt.size() - 2), error);
 
-	//   if (prompt == "STOP>") {
-	//     emit stopReceived();
-	//     mPromptTimer.stop();
-	//   }
-	//   else if (prompt != "---->") {
-	//     setPrompt(prompt);
-	//   }
+	//mPromptTimer.start();  // restart timer (from zero again)
+	//hasPrompt := false
+	endIndex, notEnoughData := searchEndOfAsciiMessage(buffer, ndx, maxASCIICommandReplySize)
+	if endIndex != -1 {
+		// QString prompt = mBuffer.mid(endIndex - sPromptLength, sPromptLength);
+		// bool error = (mBuffer.at(startIndex + 2) == '?');
+		// emit newCommandReply(mBuffer.mid(startIndex, endIndex - startIndex - prompt.size() - 2), error);
 
-	// consume "\r\n" if present
-	//   if ((mBuffer.size() > endIndex) && (mBuffer.at(endIndex) == '\r')) {
-	//     endIndex++;
-	//     if ((mBuffer.size() > endIndex) && (mBuffer.at(endIndex) == '\n')) {
-	//       endIndex++;
-	//     }
-	//   }
-	//   return endIndex - startIndex;
-	// } else {
-	return -1, notEnoughData
-	// }
+		// if (prompt == "STOP>") {
+		//   emit stopReceived();
+		//   mPromptTimer.stop();
+		// }
+		// else if (prompt != "---->") {
+		//   setPrompt(prompt);
+		// }
+
+		//consume "\r\n" if present
+		if len(*buffer) > endIndex && (*buffer)[endIndex] == '\r' {
+			endIndex++
+			if len(*buffer) > endIndex && (*buffer)[endIndex] == '\n' {
+				endIndex++
+			}
+		}
+		return endIndex - ndx, notEnoughData
+	} else {
+		return -1, notEnoughData
+	}
 }
 
+func searchEndOfAsciiMessage(buffer *[]byte, startIndex int, maxLength int) (int, bool) {
+	notEnoughData := false
+	ndx := strings.Index(string((*buffer)[startIndex:]), "\r\n")
+	found := false
+	for ndx != -1 && ndx <= startIndex+maxLength-promptLength {
+		ndx += 2 // consume the "\r\n" sequence
+		if len(*buffer) > ndx+promptLength-1 && (*buffer)[ndx+promptLength-1] == '>' {
+			endSequence := (*buffer)[ndx:promptLength]
+			matched, err := regexp.Match(promptRegExp, endSequence)
+			if err != nil {
+				log.Printf("[ERROR] searchEndOfAsciiMessage - Error evaluating regular expression: %s\n", err.Error())
+			} else {
+				if string(endSequence) == "STOP>" || string(endSequence) == "---->" ||
+					string(endSequence) == "####>" || matched {
+
+					ndx += promptLength
+					found = true
+					break
+				}
+			}
+		}
+
+		// no prompt found, so try to consume a line
+		ndx = strings.Index(string((*buffer)[ndx:]), "\r\n")
+	}
+	if found {
+		return ndx, notEnoughData
+	} else {
+		if ndx == -1 && len(*buffer) < startIndex+maxLength {
+			notEnoughData = true
+		}
+		return -1, notEnoughData
+	}
+}
+
+//TODO - Finish implementation
 func parseASCIIDisplay(buffer *[]byte, ndx int, payloads *[]map[string]interface{}) (int, bool) {
 	notEnoughData := false
 	if len(*buffer)-ndx < 3 {
@@ -241,6 +280,7 @@ func parseASCIIDisplay(buffer *[]byte, ndx int, payloads *[]map[string]interface
 	}
 }
 
+//TODO - Finish implementation
 func parseEvent(buffer *[]byte, ndx int, payloads *[]map[string]interface{}) (int, bool) {
 	notEnoughData := false
 	if len(*buffer)-ndx < 3 {
@@ -270,60 +310,56 @@ func parseEvent(buffer *[]byte, ndx int, payloads *[]map[string]interface{}) (in
 	}
 }
 
+//TODO - Finish implementation
 func parseFormattedInformationBlock(buffer *[]byte, ndx int, payloads *[]map[string]interface{}) (int, bool) {
 	notEnoughData := false
-	// mHasPrompt = false;
+	// hasPrompt = false;
 	// mPromptTimer.start(); // restart timer (from zero again)
 
 	// try to parse the first line as "<-- BLOCK I / N\r\n"
-	// int indexOfEOL = mBuffer.indexOf("\r\n", startIndex);
-	// if (indexOfEOL == -1)
-	// {
-	//   if ((mBuffer.size() - startIndex) < 30)
-	//   {
-	// 30 is taken (arbitrarily) as a reasonable small maximum lenght
-	// for the first line of the formatted information block reply.
-	//     *outNotEnoughData = true;
-	//   }
-	//   return -1;
-	// }
-	// else
-	// {
-	//   static QRegExp blockHeaderRegExp("\\$-- BLOCK (\\d+) / (\\d+)"); // (greedy by default)
-	//   QString firstLine = mBuffer.mid(startIndex, indexOfEOL - startIndex);
-	//   if (blockHeaderRegExp.indexIn(firstLine) != 0)
-	//   {
-	// the first line should immediately start matching the given regular expression
-	//     return -1;
-	//   }
-	//   else
-	//   {
-	//     int blockIndex = blockHeaderRegExp.cap(1).toInt();
-	//     int nrOfBlocks = blockHeaderRegExp.cap(2).toInt();
+	indexOfEOL := strings.Index(string((*buffer)[ndx:]), "\r\n")
+	if indexOfEOL == -1 {
+		if len(*buffer)-ndx < 30 {
+			//30 is taken (arbitrarily) as a reasonable small maximum length
+			//for the first line of the formatted information block reply.
+			notEnoughData = true
+		}
+		return -1, notEnoughData
+	} else {
+		blockHeaderRegExp := regexp.MustCompile(`\\$-- BLOCK (\\d+) / (\\d+)`) // (greedy by default)
+		firstLine := (*buffer)[ndx : indexOfEOL-ndx]
 
-	// now search for the end of the block
-	//     int endIndex = searchEndOfAsciiMessage(startIndex, sMaxFormattedInformationBlockSize, outNotEnoughData);
-	//     if (endIndex != -1)
-	//     {
-	//       QString prompt = mBuffer.mid(endIndex - sPromptLength, sPromptLength);
-	//       emit newFormattedInformationBlock(mBuffer.mid(startIndex, endIndex - startIndex - prompt.size() - 2), blockIndex, nrOfBlocks);
+		matchNdx := blockHeaderRegExp.FindStringIndex(string(firstLine))
+		if matchNdx != nil && matchNdx[0] != 0 {
+			//the first line should immediately start matching the given regular expression
+			return -1, notEnoughData
+		} else {
+			// var blockIndex, nrOfBlocks int
+			// submatches := blockHeaderRegExp.FindStringSubmatch(string(firstLine))
 
-	//       if (prompt == "STOP>")
-	//       {
-	//         emit stopReceived();
-	//       }
-	//       else if (prompt != "---->")
-	//       {
-	//         setPrompt(prompt);
-	//       }
-	//       return endIndex - startIndex;
-	//     }
-	//     else
-	//     {
-	return -1, notEnoughData
-	//     }
-	//   }
-	// }
+			// if submatches != nil {
+			// 	blockIndex, err := strconv.Atoi(submatches[1])
+			// 	nrOfBlocks, err = strconv.Atoi(submatches[2])
+			// }
+
+			// now search for the end of the block
+			endIndex, notEnoughData := searchEndOfAsciiMessage(buffer, ndx, maxFormattedInformationBlockSize)
+			if endIndex != -1 {
+				// prompt := (*buffer)[endIndex-promptLength : promptLength]
+				//emit newFormattedInformationBlock((*buffer)[ndx: endIndex - ndx - len(prompt) - 2], blockIndex, nrOfBlocks)
+				// if string(prompt) == "STOP>" {
+				//emit stopReceived();
+				// } else {
+				// if prompt != "---->" {
+				// 	setPrompt(prompt);
+				// }
+				// }
+				return endIndex - ndx, notEnoughData
+			} else {
+				return -1, notEnoughData
+			}
+		}
+	}
 }
 
 func handleSbfBlock(buffer []byte) {

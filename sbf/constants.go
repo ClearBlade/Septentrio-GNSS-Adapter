@@ -1,12 +1,12 @@
 package sbf
 
+//Payload type declarations
+
 /**
  * Declarations and definitions of SBF (Septentrio Binary Format) blocks.
  *
  * Adapted from sbfdef.h in the sdk provided in the RxTools suite
  */
-
-//TODO - Figure out all of the sizeof stuff
 
 const RTCM16MSG_LENGTH = 90
 const CMR2SHORTID_LENGTH = 8
@@ -39,17 +39,16 @@ const MAXSB_SATRES = 3
 const MAXSB_CONNDESCR = 16
 const MAXSB_DATATYPES = 16
 
-// TODO - uncomment and fix
-//  const I8_NOTVALID   int8 = 0x80
-//  const UI8_NOTVALID   uint8 = 0xFF
-//  const I16_NOTVALID   int16= 0x8000
-//  const U16_NOTVALID   uint16=0xFFFF
-//  const I32_NOTVALID   int32 =0x80000000
-//  const U32_NOTVALID   uint32=0xFFFFFFFF
-//  const I64_NOTVALID   int64= 0x8000000000000000
-//  const U64_NOTVALID uint64 = 0xFFFFFFFFFFFFFFFF
-//  const F32_NOTVALID         =    -2e10
-//  const F64_NOTVALID          =   -2e10
+const I8_NOTVALID uint8 = 0x80
+const UI8_NOTVALID uint8 = 0xFF
+const I16_NOTVALID uint16 = 0x8000
+const U16_NOTVALID uint16 = 0xFFFF
+const I32_NOTVALID uint32 = 0x80000000
+const U32_NOTVALID uint32 = 0xFFFFFFFF
+const I64_NOTVALID uint64 = 0x8000000000000000
+const U64_NOTVALID uint64 = 0xFFFFFFFFFFFFFFFF
+const F32_NOTVALID = -2e10
+const F64_NOTVALID = -2e10
 
 /*==SBF-IDs==============================================================*/
 /* minor version are indicated in first 3 bits */
