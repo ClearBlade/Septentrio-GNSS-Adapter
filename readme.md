@@ -162,7 +162,7 @@ In order to compile the adapter for execution within linux, the following steps 
     * ```cd Septentrio-GNSS-Adapter```
  4. Compile the adapter
     * ```GOARCH=arm64 GOOS=linux go build```
-    * ```GOARCH=arm GOARM=5 GOOS=linux go build```
+    * ```GOARCH=arm GOARM=7 GOOS=linux go build```
 
 
 

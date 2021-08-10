@@ -88,7 +88,7 @@ func main() {
 	log.Printf("[INFO] OS signal %s received, ending go routines.", sig)
 
 	//End the existing goRoutines
-	endWorkersChannel <- "Stop Channel"
+	endWorkersChannel <- "Stop"
 
 	os.Exit(0)
 }
@@ -207,6 +207,7 @@ func readWorker() {
 
 	//Ensure we close the serial port or tcp connection when we exit
 	defer func() {
+		log.Printf("[DEBUG] readWorker - Closing %s port\n", adapterSettings.ConnectionType)
 		if adapterSettings.ConnectionType == "serial" {
 			port.(serial.Port).Close()
 		} else {
@@ -235,8 +236,8 @@ func readWorker() {
 				log.Printf("[ERROR] readWorker - Error reading from %s port on GNSS Receiver: %s\n", adapterSettings.ConnectionType, err.Error())
 			} else {
 				if n > 0 {
-					log.Printf("[DEBUG] readFromSerialPort - %d bytes read from serial port\n", n)
-					log.Printf("[DEBUG] %v\n", buff[:n])
+					log.Printf("[DEBUG] readWorker - %d bytes read from %s port\n", n, adapterSettings.ConnectionType)
+					log.Printf("[DEBUG] %s\n", string(buff[:n]))
 					buffer = append(buffer, buff[:n]...)
 					parseAndPublishPayloads()
 				}
@@ -250,7 +251,6 @@ func parseAndPublishPayloads() {
 
 	//We need to ensure that we only have 1 instance of the parsing goroutine
 	//running at any one time
-	parsingIsRunning = true
 	if !parsingIsRunning {
 		parsingIsRunning = true
 
