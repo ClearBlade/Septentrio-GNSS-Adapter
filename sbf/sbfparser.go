@@ -10,8 +10,8 @@ import (
 	"github.com/snksoft/crc"
 )
 
-const promptRegExp = `COM\\d>|USB\\d>|OTG\\d>|IP\\d{2}>|BT\\d{2}>` ///< regular expression defining what a prompt looks like
-const promptLength = 5                                             ///< length of a prompt
+const promptRegExp = `COM\d>|USB\d>|OTG\d>|IP\d{2}>|BT\d{2}>` ///< regular expression defining what a prompt looks like
+const promptLength = 5                                        ///< length of a prompt
 const maxASCIIDisplaySize = 16384
 const maxFormattedInformationBlockSize = 4096
 const maxASCIICommandReplySize = 4096
@@ -65,26 +65,34 @@ func handleCommandPrompt(buffer *[]byte, ndx int, payloads *[]map[string]interfa
 	//See if we have enough characters to qualify for a prompt
 	if ndx+1 >= promptLength {
 		//See if the preceding characters match what we would expect a prompt to look like
-		matched, err := regexp.Match(promptRegExp, (*buffer)[(ndx-promptLength+1):ndx])
+		matched, err := regexp.Match(promptRegExp, (*buffer)[(ndx-promptLength+1):ndx+1])
 		if err != nil {
-			log.Printf("[ERROR] parse - Error evaluating regular expression: %s\n", err.Error())
+			log.Printf("[ERROR] handleCommandPrompt - Error evaluating regular expression: %s\n", err.Error())
 		} else {
 			if matched {
-				prompt = (*buffer)[(ndx - promptLength + 1):ndx]
+				prompt = (*buffer)[(ndx - promptLength + 1) : ndx+1]
 			}
 		}
 	}
 
+	log.Printf("[DEBUG] handleCommandPrompt - Command prompt received: %s\n", string(prompt))
+
 	if len(prompt) > 0 {
-		if ndx-len(prompt)+1 > 0 {
-			log.Printf("[DEBUG] parse - Command prompt received: %s\n", string(prompt))
+		if ndx-len(prompt)+1 >= 0 {
+			log.Printf("[DEBUG] handleCommandPrompt - Command prompt received: %s\n", string(prompt))
 		}
 		// TODO - Implement this code if we need the adapter to handle command prompts
 		//setPrompt(prompt);
 	}
-	log.Printf("[DEBUG] parse - Removing prompt from buffer: %s\n", string(prompt))
-	*buffer = append((*buffer)[:ndx-promptLength], (*buffer)[ndx+1:]...)
-	return false
+
+	log.Println("[DEBUG] handleCommandPrompt - Removing command prompt from buffer")
+	*buffer = append((*buffer)[:ndx-promptLength+1], (*buffer)[ndx+1:]...)
+
+	if len(*buffer) > 0 {
+		return false
+	} else {
+		return true
+	}
 }
 
 func handleReceivedData(buffer *[]byte, ndx int, payloads *[]map[string]interface{}) bool {
@@ -326,7 +334,7 @@ func parseFormattedInformationBlock(buffer *[]byte, ndx int, payloads *[]map[str
 		}
 		return -1, notEnoughData
 	} else {
-		blockHeaderRegExp := regexp.MustCompile(`\\$-- BLOCK (\\d+) / (\\d+)`) // (greedy by default)
+		blockHeaderRegExp := regexp.MustCompile(`\$-- BLOCK (\d+) / (\d+)`) // (greedy by default)
 		firstLine := (*buffer)[ndx : indexOfEOL-ndx]
 
 		matchNdx := blockHeaderRegExp.FindStringIndex(string(firstLine))
