@@ -88,7 +88,8 @@ func main() {
 	log.Printf("[INFO] OS signal %s received, ending go routines.", sig)
 
 	//End the existing goRoutines
-	endWorkersChannel <- "Stop"
+	//TODO - This does not appear to be working
+	//endWorkersChannel <- "Stop"
 
 	os.Exit(0)
 }
@@ -227,20 +228,31 @@ func readWorker() {
 			if adapterSettings.ConnectionType == "serial" {
 				n, err = port.(serial.Port).Read(buff)
 			} else {
+				if adapterSettings.Timeout > 0 {
+					port.(net.Conn).SetReadDeadline(time.Now().Add(time.Duration(adapterSettings.Timeout) * time.Second))
+				}
 				n, err = port.(net.Conn).Read(buff)
 			}
 
 			if err != nil {
-				//TODO - Should we exit with a fatal error?
-				//TODO - Need to see if we get EOF errors
-				log.Printf("[ERROR] readWorker - Error reading from %s port on GNSS Receiver: %s\n", adapterSettings.ConnectionType, err.Error())
-			} else {
-				if n > 0 {
-					log.Printf("[DEBUG] readWorker - %d bytes read from %s port\n", n, adapterSettings.ConnectionType)
-					log.Printf("[DEBUG] %s\n", string(buff[:n]))
-					buffer = append(buffer, buff[:n]...)
-					parseAndPublishPayloads()
+
+				//Ignore TCP timeout errors
+				if adapterSettings.ConnectionType == "tcp" {
+					if neterr, ok := err.(net.Error); ok && neterr.Timeout() {
+						continue
+					}
 				}
+
+				//TODO - Should we exit with a fatal error?
+				//TODO - Need to see if we get EOF errors: Not receiving them with tcp
+				log.Printf("[ERROR] readWorker - Error reading from %s port on GNSS Receiver: %+v\n", adapterSettings.ConnectionType, err)
+			}
+
+			if n > 0 {
+				log.Printf("[DEBUG] readWorker - %d bytes read from %s port\n", n, adapterSettings.ConnectionType)
+				log.Printf("[DEBUG] %s\n", string(buff[:n]))
+				buffer = append(buffer, buff[:n]...)
+				parseAndPublishPayloads()
 			}
 		}
 	}
@@ -264,6 +276,7 @@ func parseAndPublishPayloads() {
 				parsedPayloads = nil
 			}
 			parsingIsRunning = false
+			log.Println("[DEBUG] parseAndPublishPayloads - Parsing complete")
 		}()
 	} else {
 		log.Println("[DEBUG] parseAndPublishPayloads - Parsing is already being executed")
@@ -314,24 +327,21 @@ func createTcpPort() error {
 	}
 
 	log.Printf("[DEBUG] createSerialPort - TCP port %s opened\n", addr)
-
-	if adapterSettings.Timeout > 0 {
-		port.(net.Conn).SetReadDeadline(time.Now().Add(time.Duration(adapterSettings.Timeout) * time.Second))
-		log.Printf("[DEBUG] createSerialPort - TCP read timeout set to %d seconds\n", adapterSettings.Timeout)
-	}
 	return nil
 }
 
 func writeToPort(payload []byte) {
+	//We need to append the newline character to the bytes array to that the command
+	//can be processed by the septentrio gnss receiver
 	if adapterSettings.ConnectionType == "serial" {
 		if port != nil {
-			writeToSerialPort(payload)
+			writeToSerialPort(append(payload, "\n"...))
 		} else {
 			log.Print("[ERROR] writeToPort - Cannot write to serial port. Port not open.\n")
 		}
 	} else if adapterSettings.ConnectionType == "tcp" {
 		if port != nil {
-			writeToTcpPort(payload)
+			writeToTcpPort(append(payload, "\n"...))
 		} else {
 			log.Print("[ERROR] writeToPort - Cannot write to tcp port. Port not open.\n")
 		}
