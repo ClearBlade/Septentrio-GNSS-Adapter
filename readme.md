@@ -75,16 +75,19 @@ The adapter_settings column will need to contain a JSON object containing the fo
 #### adapter_settings_examples
 
 ##### TCP connection type example
+```json
 {  
   "connectionType": "tcp",
   "host": "localhost",
   "tcpPort": 28784,
   "readTimeout": 1 //Number of seconds
 }
+```
 
 ##### Serial connection type example
   * Note: hardware and software flow control is currently not supported.
 
+```json
 {  
   "connectionType": "serial"
   "serialPort":"/dev/ttyACM0", 
@@ -94,6 +97,7 @@ The adapter_settings column will need to contain a JSON object containing the fo
   "stopBits": 1, //1, 1.5, 2 - default value is 1
   "readTimeout": 1 //Number of seconds
 }
+```
 
 ## Usage
 
@@ -147,11 +151,9 @@ The adapter_settings column will need to contain a JSON object containing the fo
   * OPTIONAL
   * Defaults to __info__
 
-
 ## Setup
 ---
 The Septentrio GNSS adapter is dependent upon the ClearBlade Go SDK and its dependent libraries being installed. The Septentrio GNSS adapter adapter was written in Go and therefore requires Go to be installed (https://golang.org/doc/install).
-
 
 ### Adapter compilation
 In order to compile the adapter for execution within linux, the following steps need to be performed:
@@ -164,5 +166,65 @@ In order to compile the adapter for execution within linux, the following steps 
     * ```GOARCH=arm64 GOOS=linux go build```
     * ```GOARCH=arm GOARM=7 GOOS=linux go build```
 
+### Payload Formats
 
+#### Command Request
+Command requests sent to the adapter will consist of nothing but a string containing the command line command to execute against the Septentrio GNSS receiver.
 
+```getCOMSettings```
+```exeSBFOnce, USB2, GPS+GLO+GAL+BDS```
+```lstCommandHelp```
+
+#### Receive Data
+All data received by the adapter and sent to the Edge/Platform via MQTT will be in the form of a JSON object. The structure of the JSON object will be dictated by the type of data being forwarded from the adapter. The sections below outline the JSON format utilized for each type of data received from the Septentrio GNSS receiver.
+
+##### ASCII Command Reply
+```json
+{  
+	"dataType":  "asciiCommandReply",
+	"timestamp": "", //ISO formatted timestamp
+	"asciiCommandReply": "" //A string containing the command reply
+}
+```
+
+##### ASCII Display
+```json
+{
+		"dataType":  "asciiDisplay",
+		"timestamp": "", //ISO formatted timestamp
+		"asciiDisplay": "" //A string containing the ascii display data
+}
+```
+
+##### Event
+```json
+{
+	"dataType":  "event",
+	"timestamp": "", //ISO formatted timestamp
+	"event": "" //A string containing the event
+}
+```
+
+##### Formatted Info Block
+```json
+{
+	"dataType":  "formattedInfoBlock",
+	"timestamp": "", //ISO formatted timestamp
+	"formattedInfoBlock": "" //A string containing the formatted information block
+}
+```
+
+##### SBF
+```json
+{
+	"dataType":  "sbf",
+	"timestamp": "", //ISO formatted timestamp
+	"sbf": {
+		"blockType": "rfStatus", //sbf block type
+		"blockID": 9999,
+		"block": {
+			//Data specific to SBF block
+		}
+	},
+}
+```
