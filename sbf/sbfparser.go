@@ -22,7 +22,7 @@ const (
 	recordTypeAsciiCommandReply      = "asciiCommandReply"
 	recordTypeAsciiDisplay           = "asciiDisplay"
 	recordTypeEvent                  = "event"
-	recordTypeInfoBlock              = "sbf"
+	recordTypeInfoBlock              = "formattedInfoBlock"
 )
 
 //var hasPrompt bool = false
@@ -242,7 +242,7 @@ func parseASCIICommandReply(buffer *[]byte, ndx int, payloads *[]map[string]inte
 			"data":      map[string]interface{}{},
 		}
 
-		response["data"].(map[string]interface{})["recordTypeAsciiCommandReply"] = string((*buffer)[ndx:endIndex])
+		response["data"].(map[string]interface{})[recordTypeAsciiCommandReply] = string((*buffer)[ndx:endIndex])
 
 		log.Println("[DEBUG] parseASCIICommandReply - Appending response to payloads array")
 		*payloads = append(*payloads, response)
@@ -265,11 +265,21 @@ func searchEndOfAsciiMessage(buffer *[]byte, startIndex int, maxLength int) (int
 	ndx := strings.Index(string((*buffer)[startIndex:]), "\r\n")
 	found := false
 
+	log.Printf("[DEBUG] searchEndOfAsciiMessage - buffer length: %d\n", len(*buffer))
+	log.Printf("[DEBUG] searchEndOfAsciiMessage - startIndex: %d\n", startIndex)
+	log.Printf("[DEBUG] searchEndOfAsciiMessage - maxLength: %d\n", maxLength)
+	log.Printf("[DEBUG] searchEndOfAsciiMessage - buffer: %s\n", string((*buffer)[ndx:]))
+
 	for ndx != -1 && ndx <= startIndex+maxLength-promptLength {
+		log.Printf("[DEBUG] searchEndOfAsciiMessage - ndx: %d\n", ndx)
+
 		ndx += 2 // consume the "\r\n" sequence
 
 		if len(*buffer) > ndx+promptLength-1 && (*buffer)[ndx+promptLength-1] == '>' {
 			endSequence := (*buffer)[ndx : ndx+promptLength]
+
+			log.Printf("[DEBUG] searchEndOfAsciiMessage - endSequence: %s\n", endSequence)
+
 			matched, err := regexp.Match(promptRegExp, endSequence)
 			if err != nil {
 				log.Printf("[ERROR] searchEndOfAsciiMessage - Error evaluating regular expression: %s\n", err.Error())
@@ -280,6 +290,9 @@ func searchEndOfAsciiMessage(buffer *[]byte, startIndex int, maxLength int) (int
 					string(endSequence) == "####>" || matched {
 
 					ndx += promptLength
+
+					log.Println("[DEBUG] searchEndOfAsciiMessage - Found end of ascii message")
+
 					found = true
 					break
 				}
@@ -394,8 +407,13 @@ func parseFormattedInformationBlock(buffer *[]byte, ndx int, payloads *[]map[str
 	// hasPrompt = false;
 	// mPromptTimer.start(); // restart timer (from zero again)
 
-	// try to parse the first line as "<-- BLOCK I / N\r\n"
+	log.Printf("[DEBUG] parseFormattedInformationBlock - buffer: %s\n", string((*buffer)[ndx:]))
+
+	// try to parse the first line as "$-- BLOCK I / N\r\n"
 	indexOfEOL := strings.Index(string((*buffer)[ndx:]), "\r\n")
+
+	log.Printf("[DEBUG] parseFormattedInformationBlock - indexOfEOL: %d\n", indexOfEOL)
+
 	if indexOfEOL == -1 {
 		if len(*buffer)-ndx < 30 {
 			//30 is taken (arbitrarily) as a reasonable small maximum length
@@ -407,21 +425,21 @@ func parseFormattedInformationBlock(buffer *[]byte, ndx int, payloads *[]map[str
 		blockHeaderRegExp := regexp.MustCompile(`\$-- BLOCK (\d+) / (\d+)`) // (greedy by default)
 		firstLine := (*buffer)[ndx : indexOfEOL-ndx]
 
+		log.Printf("[DEBUG] parseFormattedInformationBlock - firstLine: %s\n", string(firstLine))
+
 		matchNdx := blockHeaderRegExp.FindStringIndex(string(firstLine))
+
+		log.Printf("[DEBUG] parseFormattedInformationBlock - matchNdx: %+v\n", matchNdx)
+
 		if matchNdx != nil && matchNdx[0] != 0 {
 			//the first line should immediately start matching the given regular expression
 			return -1, notEnoughData
 		} else {
-			// var blockIndex, nrOfBlocks int
-			// submatches := blockHeaderRegExp.FindStringSubmatch(string(firstLine))
-
-			// if submatches != nil {
-			// 	blockIndex, err := strconv.Atoi(submatches[1])
-			// 	nrOfBlocks, err = strconv.Atoi(submatches[2])
-			// }
-
 			// now search for the end of the block
 			endIndex, notEnoughData := searchEndOfAsciiMessage(buffer, ndx, maxFormattedInformationBlockSize)
+
+			log.Printf("[DEBUG] parseFormattedInformationBlock - endIndex: %d\n", endIndex)
+
 			if endIndex != -1 {
 				// prompt := (*buffer)[endIndex-promptLength : promptLength]
 				//emit newFormattedInformationBlock((*buffer)[ndx: endIndex - ndx - len(prompt) - 2], blockIndex, nrOfBlocks)
@@ -433,16 +451,16 @@ func parseFormattedInformationBlock(buffer *[]byte, ndx int, payloads *[]map[str
 				// }
 				// }
 
-				// response := map[string]interface{}{
-				// 	"dataType":  recordTypeAsciiCommandReply,
-				// 	"timestamp": time.Now().UTC().Format(time.RFC3339),
-				// 	"data":      map[string]interface{}{},
-				// }
+				response := map[string]interface{}{
+					"dataType":  recordTypeInfoBlock,
+					"timestamp": time.Now().UTC().Format(time.RFC3339),
+					"data":      map[string]interface{}{},
+				}
 
-				// response["data"].(map[string]interface{})["recordTypeAsciiCommandReply"] = string((*buffer)[ndx:endIndex])
+				response["data"].(map[string]interface{})[recordTypeInfoBlock] = string((*buffer)[ndx:endIndex])
 
-				// log.Println("[DEBUG] parseASCIICommandReply - Appending response to payloads array")
-				// *payloads = append(*payloads, response)
+				log.Println("[DEBUG] parseASCIICommandReply - Appending response to payloads array")
+				*payloads = append(*payloads, response)
 
 				return endIndex - ndx, notEnoughData
 			} else {
