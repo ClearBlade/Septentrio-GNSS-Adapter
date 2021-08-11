@@ -250,7 +250,6 @@ func readWorker() {
 
 			if n > 0 {
 				log.Printf("[DEBUG] readWorker - %d bytes read from %s port\n", n, adapterSettings.ConnectionType)
-				log.Printf("[DEBUG] %s\n", string(buff[:n]))
 				buffer = append(buffer, buff[:n]...)
 				parseAndPublishPayloads()
 			}

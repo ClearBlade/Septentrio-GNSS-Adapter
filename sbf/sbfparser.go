@@ -6,22 +6,33 @@ import (
 	"log"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/snksoft/crc"
 )
 
-const promptRegExp = `COM\d>|USB\d>|OTG\d>|IP\d{2}>|BT\d{2}>` ///< regular expression defining what a prompt looks like
-const promptLength = 5                                        ///< length of a prompt
-const maxASCIIDisplaySize = 16384
-const maxFormattedInformationBlockSize = 4096
-const maxASCIICommandReplySize = 4096
-const maxEventSize = 256
+const (
+	promptRegExp                     = `COM\d>|USB\d>|OTG\d>|IP\d{2}>|BT\d{2}>` ///< regular expression defining what a prompt looks like
+	promptLength                     = 5                                        ///< length of a prompt
+	maxASCIIDisplaySize              = 16384
+	maxFormattedInformationBlockSize = 4096
+	maxASCIICommandReplySize         = 4096
+	maxEventSize                     = 256
+	recordTypeSBF                    = "sbf"
+	recordTypeAsciiCommandReply      = "asciiCommandReply"
+	recordTypeAsciiDisplay           = "asciiDisplay"
+	recordTypeEvent                  = "event"
+	recordTypeInfoBlock              = "sbf"
+)
 
 //var hasPrompt bool = false
 
 //Taken from parse function in ssnrx.cpp
 func Parse(buffer *[]byte, payloads *[]map[string]interface{}) {
 	done := false
+
+	log.Printf("[DEBUG] Parse - Buffer to parse: %s\n", string(*buffer))
+
 	for !done {
 		// We are looking for either
 		// - a prompt (which may be caused by sending [Enter])
@@ -77,13 +88,13 @@ func handleCommandPrompt(buffer *[]byte, ndx int, payloads *[]map[string]interfa
 
 	log.Printf("[DEBUG] handleCommandPrompt - Command prompt received: %s\n", string(prompt))
 
-	if len(prompt) > 0 {
-		if ndx-len(prompt)+1 >= 0 {
-			log.Printf("[DEBUG] handleCommandPrompt - Command prompt received: %s\n", string(prompt))
-		}
-		// TODO - Implement this code if we need the adapter to handle command prompts
-		//setPrompt(prompt);
-	}
+	// TODO - Implement this code if we need the adapter to handle command prompts
+	// if len(prompt) > 0 {
+	// 	if ndx-len(prompt)+1 >= 0 {
+	// 		log.Printf("[DEBUG] handleCommandPrompt - Command prompt received: %s\n", string(prompt))
+	// 	}
+	// 	//setPrompt(prompt);
+	// }
 
 	log.Println("[DEBUG] handleCommandPrompt - Removing command prompt from buffer")
 	*buffer = append((*buffer)[:ndx-promptLength+1], (*buffer)[ndx+1:]...)
@@ -96,6 +107,8 @@ func handleCommandPrompt(buffer *[]byte, ndx int, payloads *[]map[string]interfa
 }
 
 func handleReceivedData(buffer *[]byte, ndx int, payloads *[]map[string]interface{}) bool {
+	log.Printf("[DEBUG] handleReceivedData - ndx: %d\n", ndx)
+
 	if ndx > 0 {
 		*buffer = (*buffer)[ndx:]
 	}
@@ -105,25 +118,37 @@ func handleReceivedData(buffer *[]byte, ndx int, payloads *[]map[string]interfac
 			processedBytes := 0
 
 			if (*buffer)[1] == '@' {
+				log.Println("[DEBUG] handleReceivedData - sbf block detected")
 				processedBytes, notEnoughData = parseSBF(buffer, 0, payloads)
+				log.Printf("[DEBUG] handleReceivedData - Processed bytes: %d, notEnoughData: %t\n", processedBytes, notEnoughData)
 			} else if (*buffer)[1] == 'R' {
+				log.Println("[DEBUG] handleReceivedData - ascii command reply detected")
 				processedBytes, notEnoughData = parseASCIICommandReply(buffer, 0, payloads)
+				log.Printf("[DEBUG] handleReceivedData - Processed bytes: %d, notEnoughData: %t\n", processedBytes, notEnoughData)
 			} else if (*buffer)[1] == 'T' {
 				if len(*buffer) < 3 {
 					notEnoughData = true
+					log.Println("[DEBUG] handleReceivedData - Not enough data received for message type T")
 				} else {
 					if (*buffer)[2] == 'D' {
+						log.Println("[DEBUG] handleReceivedData - ascii display detected")
 						processedBytes, notEnoughData = parseASCIIDisplay(buffer, 0, payloads)
+						log.Printf("[DEBUG] handleReceivedData - Processed bytes: %d, notEnoughData: %t\n", processedBytes, notEnoughData)
 					} else if (*buffer)[2] == 'E' {
+						log.Println("[DEBUG] handleReceivedData - event detected")
 						processedBytes, notEnoughData = parseEvent(buffer, 0, payloads)
+						log.Printf("[DEBUG] handleReceivedData - Processed bytes: %d, notEnoughData: %t\n", processedBytes, notEnoughData)
 					}
 				}
 			} else if (*buffer)[1] == '-' {
+				log.Println("[DEBUG] handleReceivedData - formatted information block detected")
 				processedBytes, notEnoughData = parseFormattedInformationBlock(buffer, 0, payloads)
+				log.Printf("[DEBUG] handleReceivedData - Processed bytes: %d, notEnoughData: %t\n", processedBytes, notEnoughData)
 			}
 
 			if processedBytes > 0 {
 				*buffer = (*buffer)[processedBytes:]
+				log.Printf("[DEBUG] Parse - Buffer after removing bytes: %s\n", string(*buffer))
 			} else {
 				if notEnoughData {
 					// the buffer does not yet contain enough data to parse the message
@@ -140,6 +165,7 @@ func handleReceivedData(buffer *[]byte, ndx int, payloads *[]map[string]interfac
 		}
 		return false
 	} else {
+		log.Println("[DEBUG] handleReceivedData - buffer length < 2")
 		// the '$' was not followed yet by a byte indicating the type of message
 		// so we return control, and parsing will be reattempted upon receiving more data
 		return true
@@ -181,7 +207,7 @@ func parseSBF(buffer *[]byte, ndx int, payloads *[]map[string]interface{}) (int,
 	// emit newSBFBlock(mBuffer.mid(startIndex, length));
 	// emit newSBFBlockWithId(mBuffer.mid(startIndex, length), (actualID & 0x1fff), (actualID >> 13));
 
-	//TODO - Send the SBF block for parsing
+	//TODO - Send the payloads *[]map[string]interface{} variable so that we can return responses
 	handleSbfBlock((*buffer)[ndx:length])
 	return int(length), notEnoughData
 }
@@ -196,7 +222,9 @@ func parseASCIICommandReply(buffer *[]byte, ndx int, payloads *[]map[string]inte
 	//mPromptTimer.start();  // restart timer (from zero again)
 	//hasPrompt := false
 	endIndex, notEnoughData := searchEndOfAsciiMessage(buffer, ndx, maxASCIICommandReplySize)
+
 	if endIndex != -1 {
+		log.Printf("[DEBUG] parseASCIICommandReply - Last character in buffer: %s\n", string((*buffer)[endIndex-1]))
 		// QString prompt = mBuffer.mid(endIndex - sPromptLength, sPromptLength);
 		// bool error = (mBuffer.at(startIndex + 2) == '?');
 		// emit newCommandReply(mBuffer.mid(startIndex, endIndex - startIndex - prompt.size() - 2), error);
@@ -208,6 +236,16 @@ func parseASCIICommandReply(buffer *[]byte, ndx int, payloads *[]map[string]inte
 		// else if (prompt != "---->") {
 		//   setPrompt(prompt);
 		// }
+		response := map[string]interface{}{
+			"dataType":  recordTypeAsciiCommandReply,
+			"timestamp": time.Now().UTC().Format(time.RFC3339),
+			"data":      map[string]interface{}{},
+		}
+
+		response["data"].(map[string]interface{})["recordTypeAsciiCommandReply"] = string((*buffer)[ndx:endIndex])
+
+		log.Println("[DEBUG] parseASCIICommandReply - Appending response to payloads array")
+		*payloads = append(*payloads, response)
 
 		//consume "\r\n" if present
 		if len(*buffer) > endIndex && (*buffer)[endIndex] == '\r' {
@@ -226,14 +264,18 @@ func searchEndOfAsciiMessage(buffer *[]byte, startIndex int, maxLength int) (int
 	notEnoughData := false
 	ndx := strings.Index(string((*buffer)[startIndex:]), "\r\n")
 	found := false
+
 	for ndx != -1 && ndx <= startIndex+maxLength-promptLength {
 		ndx += 2 // consume the "\r\n" sequence
+
 		if len(*buffer) > ndx+promptLength-1 && (*buffer)[ndx+promptLength-1] == '>' {
-			endSequence := (*buffer)[ndx:promptLength]
+			endSequence := (*buffer)[ndx : ndx+promptLength]
 			matched, err := regexp.Match(promptRegExp, endSequence)
 			if err != nil {
 				log.Printf("[ERROR] searchEndOfAsciiMessage - Error evaluating regular expression: %s\n", err.Error())
 			} else {
+				log.Printf("[DEBUG] searchEndOfAsciiMessage - RegExp matched: %t\n", matched)
+
 				if string(endSequence) == "STOP>" || string(endSequence) == "---->" ||
 					string(endSequence) == "####>" || matched {
 
@@ -245,14 +287,18 @@ func searchEndOfAsciiMessage(buffer *[]byte, startIndex int, maxLength int) (int
 		}
 
 		// no prompt found, so try to consume a line
-		ndx = strings.Index(string((*buffer)[ndx:]), "\r\n")
+		ndx += strings.Index(string((*buffer)[ndx:]), "\r\n")
 	}
+
 	if found {
 		return ndx, notEnoughData
 	} else {
 		if ndx == -1 && len(*buffer) < startIndex+maxLength {
+			log.Println("[DEBUG] searchEndOfAsciiMessage - not enough data to locate command prompt")
 			notEnoughData = true
 		}
+
+		log.Printf("[DEBUG] searchEndOfAsciiMessage - returning -1,%t\n", notEnoughData)
 		return -1, notEnoughData
 	}
 }
@@ -276,6 +322,18 @@ func parseASCIIDisplay(buffer *[]byte, ndx int, payloads *[]map[string]interface
 		//
 		//asciiDisplayContents := (*buffer)[ndx+5 : endIndex-(ndx+5)]
 		// emit newASCIIDisplay(asciiDisplayContents);
+
+		// response := map[string]interface{}{
+		// 	"dataType":  recordTypeAsciiCommandReply,
+		// 	"timestamp": time.Now().UTC().Format(time.RFC3339),
+		// 	"data":      map[string]interface{}{},
+		// }
+
+		// response["data"].(map[string]interface{})["recordTypeAsciiCommandReply"] = string((*buffer)[ndx:endIndex])
+
+		// log.Println("[DEBUG] parseASCIICommandReply - Appending response to payloads array")
+		// *payloads = append(*payloads, response)
+
 		return endIndex + 9 - ndx, notEnoughData // total processed bytes, including start and end delimiters
 	} else {
 		if endIndex == -1 && (len(*buffer) < ndx+maxASCIIDisplaySize) {
@@ -306,6 +364,18 @@ func parseEvent(buffer *[]byte, ndx int, payloads *[]map[string]interface{}) (in
 		//
 		//event := string((*buffer)[ndx+4 : endIndex-(ndx+4)])
 		//emit newEvent(event);
+
+		// response := map[string]interface{}{
+		// 	"dataType":  recordTypeAsciiCommandReply,
+		// 	"timestamp": time.Now().UTC().Format(time.RFC3339),
+		// 	"data":      map[string]interface{}{},
+		// }
+
+		// response["data"].(map[string]interface{})["recordTypeAsciiCommandReply"] = string((*buffer)[ndx:endIndex])
+
+		// log.Println("[DEBUG] parseASCIICommandReply - Appending response to payloads array")
+		// *payloads = append(*payloads, response)
+
 		return endIndex + 2 - ndx, notEnoughData // total processed bytes, including start and end delimiters
 	} else {
 		if endIndex == -1 && len(*buffer) < ndx+maxEventSize {
@@ -362,6 +432,18 @@ func parseFormattedInformationBlock(buffer *[]byte, ndx int, payloads *[]map[str
 				// 	setPrompt(prompt);
 				// }
 				// }
+
+				// response := map[string]interface{}{
+				// 	"dataType":  recordTypeAsciiCommandReply,
+				// 	"timestamp": time.Now().UTC().Format(time.RFC3339),
+				// 	"data":      map[string]interface{}{},
+				// }
+
+				// response["data"].(map[string]interface{})["recordTypeAsciiCommandReply"] = string((*buffer)[ndx:endIndex])
+
+				// log.Println("[DEBUG] parseASCIICommandReply - Appending response to payloads array")
+				// *payloads = append(*payloads, response)
+
 				return endIndex - ndx, notEnoughData
 			} else {
 				return -1, notEnoughData
@@ -879,8 +961,9 @@ func handleRFStatus(buffer []byte) {
 	// type RFStatus_1_t RFStatus_1_0_t
 
 	response := map[string]interface{}{
-		"recordType": "rfStatus",
-		"data":       map[string]interface{}{},
+		"dataType":  recordTypeSBF,
+		"timestamp": time.Now().UTC().Format(time.RFC3339),
+		"data":      map[string]interface{}{},
 	}
 
 	blockBuffer := bytes.NewReader(buffer)
@@ -890,7 +973,7 @@ func handleRFStatus(buffer []byte) {
 	rfBandArr := make([]map[string]interface{}, rfStatus.N)
 
 	//Process the data in the RFStatus_1_t struct
-	response["recordType"] = "rfStatus"
+	response["sbfRecordType"] = "rfStatus"
 	response["data"] = map[string]interface{}{}
 	response["data"].(map[string]interface{})["numberOfBands"] = rfStatus.N
 	response["data"].(map[string]interface{})["rfBands"] = rfBandArr
