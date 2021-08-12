@@ -1,7 +1,6 @@
 package sbf
 
 import (
-	"bytes"
 	"encoding/binary"
 	"fmt"
 	"log"
@@ -32,7 +31,7 @@ const (
 func Parse(buffer *[]byte, payloads *[]map[string]interface{}) {
 	done := false
 
-	log.Printf("[DEBUG] Parse - Buffer to parse: %s\n", string(*buffer))
+	log.Printf("[DEBUG] Parse - Buffer to parse: %+v\n", *buffer)
 
 	for !done {
 		// We are looking for either
@@ -149,7 +148,7 @@ func handleReceivedData(buffer *[]byte, ndx int, payloads *[]map[string]interfac
 
 			if processedBytes > 0 {
 				*buffer = (*buffer)[processedBytes:]
-				log.Printf("[DEBUG] Parse - Buffer after removing bytes: %s\n", string(*buffer))
+				log.Printf("[DEBUG] Parse - Buffer after removing bytes: %+v\n", buffer)
 			} else {
 				if notEnoughData {
 					// the buffer does not yet contain enough data to parse the message
@@ -446,7 +445,7 @@ func parseFormattedInformationBlock(buffer *[]byte, ndx int, payloads *[]map[str
 	}
 }
 
-func parseSBF(buffer *[]byte, ndx int, payloads *[]map[string]interface{}) (int, bool) {
+func parseSBF(buffer *[]byte, ndx uint16, payloads *[]map[string]interface{}) (int, bool) {
 	// This function will create the json structure representing an SBF data block.
 	// The JSON format of an SBF data block will have the following structure:
 	//
@@ -461,8 +460,7 @@ func parseSBF(buffer *[]byte, ndx int, payloads *[]map[string]interface{}) (int,
 	//			}
 	//		},
 	// }
-
-	bufferSize := len(*buffer)
+	bufferSize := uint16(len(*buffer))
 	notEnoughData := false
 
 	if string((*buffer)[ndx:ndx+2]) != "$@" {
@@ -474,7 +472,10 @@ func parseSBF(buffer *[]byte, ndx int, payloads *[]map[string]interface{}) (int,
 	}
 
 	// get the length field from the SBF header
-	length := uint16((*buffer)[6])<<8 + uint16((*buffer)[7])
+	length := binary.LittleEndian.Uint16((*buffer)[ndx+6 : ndx+8])
+
+	log.Printf("[DEBUG] parseSBF - SBF block length: %d\n", length)
+
 	if length < 8 {
 		log.Printf("[ERROR] parseSBF - Invalid SBF block length: %d\n", length)
 		return -1, notEnoughData
@@ -485,24 +486,28 @@ func parseSBF(buffer *[]byte, ndx int, payloads *[]map[string]interface{}) (int,
 	}
 
 	//Parse the CRC
-	expectedCRC := uint16((*buffer)[ndx+2])<<8 + uint16((*buffer)[ndx+3])
+	//(*buffer)[ndx+2 : ndx+4])
+	expectedCRC := binary.LittleEndian.Uint16([]byte{(*buffer)[ndx+2], (*buffer)[ndx+3]})
 
 	//Recalculate the CRC
-	actualCRC := crc.CalculateCRC(crc.CCITT, (*buffer)[ndx+4:length-4])
+	crcStartNdx := ndx + 4 //We don't include the sync and CRC fields when calculating crc
+	crcEndNdx := ndx + length
+	actualCRC := crc.CalculateCRC(crc.XMODEM, (*buffer)[crcStartNdx:crcEndNdx])
 
 	if actualCRC != uint64(expectedCRC) {
 		log.Printf("[ERROR] parseSBF - SBF CRC error. Expected: %d, calculated:%d\n", expectedCRC, actualCRC)
 
 		//TODO - May need to set processedBytes (1st return value) to approprate length
-		//return -1, notEnoughData
-		return int(length + 4), notEnoughData
+		return -1, notEnoughData
+		//return int(length + 4), notEnoughData
 	}
 	// emit newSBFBlock(mBuffer.mid(startIndex, length));
 	// emit newSBFBlockWithId(mBuffer.mid(startIndex, length), (actualID & 0x1fff), (actualID >> 13));
 
 	sbfblock := map[string]interface{}{}
-	if err := handleSbfBlock((*buffer)[ndx:length], sbfblock); err != nil {
-		log.Printf("[ERROR] parseSBF - Appending response to payloads array")
+
+	if err := handleSbfBlock((*buffer)[ndx:ndx+length], sbfblock); err != nil {
+		log.Printf("[ERROR] parseSBF - Error processing SBF block: %s\n", err.Error())
 	} else {
 		response := map[string]interface{}{
 			"dataType":  recordTypeSBF,
@@ -514,7 +519,7 @@ func parseSBF(buffer *[]byte, ndx int, payloads *[]map[string]interface{}) (int,
 		*payloads = append(*payloads, response)
 	}
 
-	return int(length + 4), notEnoughData
+	return int(length), notEnoughData
 }
 
 func handleSbfBlock(buffer []byte, sbfJson map[string]interface{}) error {
@@ -533,11 +538,13 @@ func handleSbfBlock(buffer []byte, sbfJson map[string]interface{}) error {
 	// specific data that will be assigned to the "block" key
 
 	//Parse the SBF ID
-	sbfID := uint16(buffer[4])<<8 + uint16(buffer[5])
+	//Only bits 0 to 12 of the ID field must be used to identify a block. Bits 13 to 15 represent the revision number.
+	sbfID := binary.LittleEndian.Uint16([]byte{buffer[4], (buffer[5] << 3) >> 3})
 	sbfJson["blockID"] = sbfID
 	sbfJson["block"] = map[string]interface{}{}
 
 	log.Printf("[DEBUG] parseSBF - SBF block ID: %d\n", sbfID)
+	log.Printf("[DEBUG] parseSBF - SBF block: %+v\n", buffer)
 
 	switch sbfID {
 	// /* Measurement Blocks */
@@ -1025,7 +1032,6 @@ func handleSbfBlock(buffer []byte, sbfJson map[string]interface{}) error {
 	// case sbfnr_GISStatus_1: //= 4107
 	// 	//case sbfid_GISStatus_1_0: //= 4107 | 0x0
 	default:
-		log.Printf("[ERROR] handleSbfBlock - Unsupported SBF block ID %d\n", sbfID)
 		return fmt.Errorf("unsupported SBF block ID: %d", sbfID)
 	}
 }
@@ -1048,16 +1054,48 @@ func handleRFStatus(buffer []byte, sbfJson map[string]interface{}) error {
 	//    ....
 	//	]
 	//}
-
 	log.Println("[DEBUG] handleRFStatus - Parsing RF Status block")
 
-	blockBuffer := bytes.NewReader(buffer)
+	log.Printf("[DEBUG] handleRFStatus - Block length: %d\n", len(buffer))
+	log.Printf("[DEBUG] handleRFStatus - Appending response to payloads array")
+
 	var rfStatus RFStatus_1_t
-	binary.Read(blockBuffer, binary.LittleEndian, &rfStatus)
+
+	//We have to parse the bytes manually because using the binary.Read option
+	//does not appear to work with the way our structs are defined.
+	//
+	// blockBuffer := bytes.NewReader(buffer)
+	// binary.Read(blockBuffer, binary.LittleEndian, &rfStatus)
+
+	//Block header
+	rfStatus.Header.Sync = binary.BigEndian.Uint16(buffer[:2]) //Use BigEndian for the sync field ($@) since it is character data
+	rfStatus.Header.CRC = binary.LittleEndian.Uint16(buffer[2:4])
+	rfStatus.Header.ID = binary.BigEndian.Uint16(buffer[4:6])
+	rfStatus.Header.Length = binary.BigEndian.Uint16(buffer[6:8])
+
+	/* Time Header */
+	rfStatus.TOW = binary.LittleEndian.Uint32(buffer[8:12])
+	rfStatus.WNc = binary.LittleEndian.Uint16(buffer[12:14])
+
+	rfStatus.N = buffer[14]
+	rfStatus.SBLength = buffer[15]
+	rfStatus.Flags = buffer[16]
+
+	log.Printf("[DEBUG] handleRFStatus - rfStatus: %+v\n", rfStatus)
+	log.Printf("[DEBUG] handleRFStatus - RF N: %d\n", rfStatus.N)
+
+	//RF Bands
+	for i, ndx := 0, 19; rfStatus.N > 0 && i < len(rfStatus.RFBand); i, ndx = i+1, ndx+int(rfStatus.SBLength) {
+		rfStatus.RFBand[i].Frequency = binary.LittleEndian.Uint32(buffer[ndx : ndx+4])
+		rfStatus.RFBand[i].Bandwidth = binary.LittleEndian.Uint16(buffer[ndx+4 : ndx+6])
+		rfStatus.RFBand[i].Info = buffer[ndx+6]
+	}
+
+	//rfStatus.RFBand = binary.LittleEndian.Uint16(buffer[20:21])   [SBF_RFSTATUS_1_0_RFBAND_LENGTH]RFBand_1_0_t
 
 	log.Printf("[DEBUG] handleRFStatus - RF status block parsed into struct: %+v\n", rfStatus)
 
-	//Process the data in the RFStatus_1_t struct
+	//Process the data in the RFStatus_1_0_t struct
 	sbfJson["numberOfBands"] = rfStatus.N
 
 	if rfStatus.Flags&(1<<7) != 0 {
