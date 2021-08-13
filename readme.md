@@ -7,7 +7,13 @@ The adapter subscribes to MQTT topics which are used to interact with the Septen
 # MQTT Topic Structure
 The Septentrio GNSS adapter utilizes MQTT messaging to communicate with the ClearBlade Platform. The Septentrio GNSS adapter will subscribe to a specific topic in order to handle Septentrio GNSS receiver requests. Additionally, the Septentrio GNSS adapter will publish messages to MQTT topics in order to send Septentrio GNSS receiver data to the ClearBlade Platform/Edge. The topic structures utilized by the Septentrio GNSS adapter are as follows:
 
-  * Receive Septentrio GNSS data: {__TOPIC ROOT__}/receive/
+  * Receive Septentrio GNSS data: {__TOPIC ROOT__}/receive/{payload_type}
+    * {__TOPIC ROOT__}/receive/sbf - SBF data block payloads
+    * {__TOPIC ROOT__}/receive/asciiCommandReply - ASCII command reply payloads
+    * {__TOPIC ROOT__}/receive/asciiDisplay - ASCII display data payloads
+    * {__TOPIC ROOT__}/receive/event - Event payloads
+    * {__TOPIC ROOT__}/receive/formattedInfoBlock - Formatted info block payloads
+
   * Execute (write) receiver command request: {__TOPIC ROOT__}/request
 
 ## ClearBlade Platform Dependencies

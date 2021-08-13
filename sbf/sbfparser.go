@@ -208,7 +208,9 @@ func parseASCIICommandReply(buffer *[]byte, ndx int, payloads *[]map[string]inte
 			"dataType":  recordTypeAsciiCommandReply,
 			"timestamp": time.Now().UTC().Format(time.RFC3339),
 		}
-		response[recordTypeAsciiCommandReply] = string((*buffer)[ndx:endIndex])
+
+		//Remove the propmt and \r\n from the response
+		response[recordTypeAsciiCommandReply] = string((*buffer)[ndx : endIndex-promptLength-2])
 
 		log.Println("[DEBUG] parseASCIICommandReply - Appending response to payloads array")
 		*payloads = append(*payloads, response)

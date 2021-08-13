@@ -290,8 +290,8 @@ func publishPayloads(payloads *[]map[string]interface{}) {
 		if err != nil {
 			log.Printf("[ERROR] Failed to marshall JSON %v: %s\n", payload, err.Error())
 		} else {
-			log.Printf("[DEBUG] publish - Publishing JSON %s to topic %s\n", jsonStr, publishTopic)
-			err = adapter_library.Publish(publishTopic, jsonStr)
+			log.Printf("[DEBUG] publish - Publishing JSON %s to topic %s\n", jsonStr, publishTopic+"/"+payload["dataType"].(string))
+			err = adapter_library.Publish(publishTopic+"/"+payload["dataType"].(string), jsonStr)
 			if err != nil {
 				log.Printf("[ERROR] Failed to publish MQTT message to topic: %s\n", err.Error())
 			}
