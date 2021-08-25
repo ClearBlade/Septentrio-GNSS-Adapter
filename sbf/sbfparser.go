@@ -179,6 +179,7 @@ func parseASCIICommandReply(buffer *[]byte, ndx int, payloads *[]map[string]inte
 	// {
 	//		"dataType":  "asciiCommandReply",
 	//		"timestamp": "", //ISO formatted timestamp
+	//		"command": "", //The command issued
 	//		"asciiCommandReply": "" //A string containing the command reply
 	// }
 
@@ -193,6 +194,8 @@ func parseASCIICommandReply(buffer *[]byte, ndx int, payloads *[]map[string]inte
 
 	if endIndex != -1 {
 		log.Printf("[DEBUG] parseASCIICommandReply - Last character in buffer: %s\n", string((*buffer)[endIndex-1]))
+
+		log.Printf("[DEBUG] parseASCIICommandReply - Command response: %s\n", string((*buffer)[ndx:endIndex-1]))
 		// QString prompt = mBuffer.mid(endIndex - sPromptLength, sPromptLength);
 		// bool error = (mBuffer.at(startIndex + 2) == '?');
 		// emit newCommandReply(mBuffer.mid(startIndex, endIndex - startIndex - prompt.size() - 2), error);
@@ -209,7 +212,7 @@ func parseASCIICommandReply(buffer *[]byte, ndx int, payloads *[]map[string]inte
 			"timestamp": time.Now().UTC().Format(time.RFC3339),
 		}
 
-		//Remove the propmt and \r\n from the response
+		//Remove the prompt and \r\n from the response
 		response[recordTypeAsciiCommandReply] = string((*buffer)[ndx : endIndex-promptLength-2])
 
 		log.Println("[DEBUG] parseASCIICommandReply - Appending response to payloads array")
@@ -303,9 +306,12 @@ func searchEndOfAsciiMessage(buffer *[]byte, startIndex int, maxLength int) (int
 			} else {
 				log.Printf("[DEBUG] searchEndOfAsciiMessage - RegExp matched: %t\n", matched)
 
-				if string(endSequence) == "STOP>" || string(endSequence) == "---->" ||
-					string(endSequence) == "####>" || matched {
-
+				// Look for a command prompt only. This allows us to group the command response
+				// and the formatted information blocks together
+				//
+				// if string(endSequence) == "STOP>" || string(endSequence) == "---->" ||
+				// 	string(endSequence) == "####>" || matched {
+				if matched {
 					ndx += promptLength
 
 					log.Println("[DEBUG] searchEndOfAsciiMessage - Found end of ascii message")
