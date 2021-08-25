@@ -31,7 +31,7 @@ const (
 func Parse(buffer *[]byte, payloads *[]map[string]interface{}) {
 	done := false
 
-	log.Printf("[DEBUG] Parse - Buffer to parse: %+v\n", *buffer)
+	//log.Printf("[DEBUG] Parse - Buffer to parse: %+v\n", *buffer)
 
 	for !done {
 		// We are looking for either
@@ -179,7 +179,6 @@ func parseASCIICommandReply(buffer *[]byte, ndx int, payloads *[]map[string]inte
 	// {
 	//		"dataType":  "asciiCommandReply",
 	//		"timestamp": "", //ISO formatted timestamp
-	//		"command": "", //The command issued
 	//		"asciiCommandReply": "" //A string containing the command reply
 	// }
 
@@ -193,8 +192,6 @@ func parseASCIICommandReply(buffer *[]byte, ndx int, payloads *[]map[string]inte
 	endIndex, notEnoughData := searchEndOfAsciiMessage(buffer, ndx, maxASCIICommandReplySize)
 
 	if endIndex != -1 {
-		log.Printf("[DEBUG] parseASCIICommandReply - Last character in buffer: %s\n", string((*buffer)[endIndex-1]))
-
 		log.Printf("[DEBUG] parseASCIICommandReply - Command response: %s\n", string((*buffer)[ndx:endIndex-1]))
 		// QString prompt = mBuffer.mid(endIndex - sPromptLength, sPromptLength);
 		// bool error = (mBuffer.at(startIndex + 2) == '?');
@@ -285,27 +282,15 @@ func searchEndOfAsciiMessage(buffer *[]byte, startIndex int, maxLength int) (int
 	ndx := strings.Index(string((*buffer)[startIndex:]), "\r\n")
 	found := false
 
-	log.Printf("[DEBUG] searchEndOfAsciiMessage - buffer length: %d\n", len(*buffer))
-	log.Printf("[DEBUG] searchEndOfAsciiMessage - startIndex: %d\n", startIndex)
-	log.Printf("[DEBUG] searchEndOfAsciiMessage - maxLength: %d\n", maxLength)
-	log.Printf("[DEBUG] searchEndOfAsciiMessage - buffer: %s\n", string((*buffer)[ndx:]))
-
 	for ndx != -1 && ndx <= startIndex+maxLength-promptLength {
-		log.Printf("[DEBUG] searchEndOfAsciiMessage - ndx: %d\n", ndx)
-
 		ndx += 2 // consume the "\r\n" sequence
 
 		if len(*buffer) > ndx+promptLength-1 && (*buffer)[ndx+promptLength-1] == '>' {
 			endSequence := (*buffer)[ndx : ndx+promptLength]
-
-			log.Printf("[DEBUG] searchEndOfAsciiMessage - endSequence: %s\n", endSequence)
-
 			matched, err := regexp.Match(promptRegExp, endSequence)
 			if err != nil {
 				log.Printf("[ERROR] searchEndOfAsciiMessage - Error evaluating regular expression: %s\n", err.Error())
 			} else {
-				log.Printf("[DEBUG] searchEndOfAsciiMessage - RegExp matched: %t\n", matched)
-
 				// Look for a command prompt only. This allows us to group the command response
 				// and the formatted information blocks together
 				//
@@ -313,9 +298,6 @@ func searchEndOfAsciiMessage(buffer *[]byte, startIndex int, maxLength int) (int
 				// 	string(endSequence) == "####>" || matched {
 				if matched {
 					ndx += promptLength
-
-					log.Println("[DEBUG] searchEndOfAsciiMessage - Found end of ascii message")
-
 					found = true
 					break
 				}
