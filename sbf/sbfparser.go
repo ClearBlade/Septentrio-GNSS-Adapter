@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"log"
+	"math"
 	"regexp"
 	"strings"
 	"time"
@@ -23,6 +24,7 @@ const (
 	recordTypeAsciiDisplay           = "asciiDisplay"
 	recordTypeEvent                  = "event"
 	recordTypeInfoBlock              = "formattedInfoBlock"
+	recordTypeNmea                   = "nmea"
 )
 
 //var hasPrompt bool = false
@@ -31,7 +33,7 @@ const (
 func Parse(buffer *[]byte, payloads *[]map[string]interface{}) {
 	done := false
 
-	//log.Printf("[DEBUG] Parse - Buffer to parse: %+v\n", *buffer)
+	log.Printf("[DEBUG] Parse - Buffer to parse: %s\n", string(*buffer))
 
 	for !done {
 		// We are looking for either
@@ -113,7 +115,7 @@ func handleReceivedData(buffer *[]byte, ndx int, payloads *[]map[string]interfac
 		*buffer = (*buffer)[ndx:]
 	}
 	if len(*buffer) >= 2 {
-		if (*buffer)[1] == '@' || (*buffer)[1] == 'R' || (*buffer)[1] == 'T' || (*buffer)[1] == '-' {
+		if (*buffer)[1] == '@' || (*buffer)[1] == 'R' || (*buffer)[1] == 'T' || (*buffer)[1] == '-' || (*buffer)[1] == 'G' {
 			notEnoughData := false
 			processedBytes := 0
 
@@ -144,6 +146,19 @@ func handleReceivedData(buffer *[]byte, ndx int, payloads *[]map[string]interfac
 				log.Println("[DEBUG] handleReceivedData - formatted information block detected")
 				processedBytes, notEnoughData = parseFormattedInformationBlock(buffer, 0, payloads)
 				log.Printf("[DEBUG] handleReceivedData - Processed bytes: %d, notEnoughData: %t\n", processedBytes, notEnoughData)
+			} else if (*buffer)[1] == 'G' {
+				if len(*buffer) < 3 {
+					notEnoughData = true
+					log.Println("[DEBUG] handleReceivedData - Not enough data received for message type G")
+				} else {
+					if (*buffer)[2] == 'P' {
+						log.Println("[DEBUG] handleReceivedData - nmea sentence detected")
+						processedBytes, notEnoughData = parseNMEA(buffer, 0, payloads)
+						log.Printf("[DEBUG] handleReceivedData - Processed bytes: %d, notEnoughData: %t\n", processedBytes, notEnoughData)
+					} else {
+						log.Printf("[DEBUG] handleReceivedData - Unknown message for type G: %s\n", string((*buffer)[2]))
+					}
+				}
 			}
 
 			if processedBytes > 0 {
@@ -512,6 +527,50 @@ func parseSBF(buffer *[]byte, ndx uint16, payloads *[]map[string]interface{}) (i
 	return int(length), notEnoughData
 }
 
+func parseNMEA(buffer *[]byte, ndx int, payloads *[]map[string]interface{}) (int, bool) {
+	// This function will create the json structure representing NMEA sentences.
+	// The JSON format of NMEA data will have the following structure:
+	//
+	// {
+	//		"dataType":  "nmea",
+	//		"timestamp": "", //ISO formatted timestamp
+	//		"nmea": "" //A string containing the nmea sentence
+	// }
+	notEnoughData := false
+	if len(*buffer)-ndx < 3 {
+		notEnoughData = true
+		return -1, notEnoughData
+	}
+	if string(*buffer)[ndx:ndx+3] != "$GP" {
+		return -1, notEnoughData
+	}
+
+	//Each NMEA sentence will end with a carriage return and line feed
+	endIndex := strings.Index(string((*buffer)[ndx:]), "\r\n")
+	if endIndex != -1 {
+		response := map[string]interface{}{
+			"dataType":  recordTypeNmea,
+			"timestamp": time.Now().UTC().Format(time.RFC3339),
+		}
+
+		response[recordTypeNmea] = string((*buffer)[ndx+3 : endIndex])
+
+		log.Println("[DEBUG] parseASCIICommandReply - Appending response to payloads array")
+		*payloads = append(*payloads, response)
+
+		return endIndex + 2, notEnoughData
+	} else {
+		if endIndex == -1 && (len(*buffer) < ndx+maxASCIIDisplaySize) {
+			notEnoughData = true
+		} else {
+			// maximum length of ASCII display exceeded without finding the end
+			notEnoughData = false
+		}
+		return -1, notEnoughData
+	}
+
+}
+
 func handleSbfBlock(buffer []byte, sbfJson map[string]interface{}) error {
 	// All parsed SBF blocks should have the following
 	// JSON structure:
@@ -750,8 +809,9 @@ func handleSbfBlock(buffer []byte, sbfJson map[string]interface{}) error {
 	// //case sbfid_DOP_2_0: //= 4001 | 0x0
 	// case sbfnr_PosCart_1: //= 4044
 	// //case sbfid_PosCart_1_0: //= 4044 | 0x0
-	// case sbfnr_PosLocal_1: //= 4052
-	// //case sbfid_PosLocal_1_0: //= 4052 | 0x0
+	case sbfnr_PosLocal_1: //= 4052
+		sbfJson["blockType"] = "posLocal"
+		return handlePosLocal(buffer, sbfJson["block"].(map[string]interface{}))
 	// case sbfnr_PosProjected_1: //= 4094
 	// //case sbfid_PosProjected_1_0: //= 4094 | 0x0
 	// case sbfnr_PVTSatCartesian_1: //= 4008
@@ -902,9 +962,12 @@ func handleSbfBlock(buffer []byte, sbfJson map[string]interface{}) error {
 	// //case sbfid_TrackingStatus_1_0: //= 5912 | 0x0
 	// case sbfnr_ChannelStatus_1: //= 4013
 	// //case sbfid_ChannelStatus_1_0: //= 4013 | 0x0
-	// case sbfnr_ReceiverStatus_2: //= 4014
-	// //case sbfid_ReceiverStatus_2_0: //= 4014 | 0x0
-	// case sbfid_ReceiverStatus_2_1: //= 4014 | 0x2000
+	case sbfnr_ReceiverStatus_2: //= 4014
+		//case sbfid_ReceiverStatus_2_0: //= 4014 | 0x0
+		//case sbfid_ReceiverStatus_2_1: //= 4014 | 0x2000
+		sbfJson["blockType"] = "receiverStatus"
+		return handleReceiverStatus(buffer, sbfJson["block"].(map[string]interface{}))
+
 	// case sbfnr_SatVisibility_1: //= 4012
 	// //case sbfid_SatVisibility_1_0: //= 4012 | 0x0
 	// case sbfnr_InputLink_1: //= 4090
@@ -937,8 +1000,10 @@ func handleSbfBlock(buffer []byte, sbfJson map[string]interface{}) error {
 	// case sbfid_BatteryStatus_1_2: //= 4083 | 0x4000
 	// case sbfnr_PowerStatus_1: //= 4101
 	// //case sbfid_PowerStatus_1_0: //= 4101 | 0x0
-	// case sbfnr_QualityInd_1: //= 4082
-	// //case sbfid_QualityInd_1_0: //= 4082 | 0x0
+	case sbfnr_QualityInd_1: //= 4082
+		// //case sbfid_QualityInd_1_0: //= 4082 | 0x0
+		sbfJson["blockType"] = "qualityInd"
+		return handleQualityInd(buffer, sbfJson["block"].(map[string]interface{}))
 	// case sbfnr_DiskStatus_1: //= 4059
 	// //case sbfid_DiskStatus_1_0: //= 4059 | 0x0
 	// case sbfid_DiskStatus_1_1: //= 4059 | 0x2000
@@ -947,7 +1012,6 @@ func handleSbfBlock(buffer []byte, sbfJson map[string]interface{}) error {
 	// case sbfnr_UHFStatus_1: //= 4085
 	// //case sbfid_UHFStatus_1_0: //= 4085 | 0x0
 	case sbfnr_RFStatus_1: //= 4092
-		//case sbfid_RFStatus_1_0: //= 4092 | 0x0
 		sbfJson["blockType"] = "rfStatus"
 		return handleRFStatus(buffer, sbfJson["block"].(map[string]interface{}))
 	// case sbfnr_RIMSHealth_1: //= 4089
@@ -966,12 +1030,9 @@ func handleSbfBlock(buffer []byte, sbfJson map[string]interface{}) error {
 	// //case sbfid_CosmosStatus_1_0: //= 4243 | 0x0
 
 	// /* Miscellaneous Blocks */
-	// case sbfnr_ReceiverSetup_1: //= 5902
-	// //case sbfid_ReceiverSetup_1_0: //= 5902 | 0x0
-	// case sbfid_ReceiverSetup_1_1: //= 5902 | 0x2000
-	// case sbfid_ReceiverSetup_1_2: //= 5902 | 0x4000
-	// case sbfid_ReceiverSetup_1_3: //= 5902 | 0x6000
-	// case sbfid_ReceiverSetup_1_4: //= 5902 | 0x8000
+	case sbfnr_ReceiverSetup_1: //= 5902
+		sbfJson["blockType"] = "receiverSetup"
+		return handleReceiverSetup(buffer, sbfJson["block"].(map[string]interface{}))
 	// case sbfnr_RxComponents_1: //= 4084
 	// //case sbfid_RxComponents_1_0: //= 4084 | 0x0
 	// case sbfnr_RxMessage_1: //= 4103
@@ -1060,8 +1121,8 @@ func handleRFStatus(buffer []byte, sbfJson map[string]interface{}) error {
 	//Block header
 	rfStatus.Header.Sync = binary.BigEndian.Uint16(buffer[:2]) //Use BigEndian for the sync field ($@) since it is character data
 	rfStatus.Header.CRC = binary.LittleEndian.Uint16(buffer[2:4])
-	rfStatus.Header.ID = binary.BigEndian.Uint16(buffer[4:6])
-	rfStatus.Header.Length = binary.BigEndian.Uint16(buffer[6:8])
+	rfStatus.Header.ID = binary.LittleEndian.Uint16([]byte{buffer[4], (buffer[5] << 3) >> 3})
+	rfStatus.Header.Length = binary.LittleEndian.Uint16(buffer[6:8])
 
 	/* Time Header */
 	rfStatus.TOW = binary.LittleEndian.Uint32(buffer[8:12])
@@ -1075,13 +1136,11 @@ func handleRFStatus(buffer []byte, sbfJson map[string]interface{}) error {
 	log.Printf("[DEBUG] handleRFStatus - RF N: %d\n", rfStatus.N)
 
 	//RF Bands
-	for i, ndx := 0, 19; rfStatus.N > 0 && i < len(rfStatus.RFBand); i, ndx = i+1, ndx+int(rfStatus.SBLength) {
+	for i, ndx := 0, 19; i < int(rfStatus.N); i, ndx = i+1, ndx+int(rfStatus.SBLength) {
 		rfStatus.RFBand[i].Frequency = binary.LittleEndian.Uint32(buffer[ndx : ndx+4])
 		rfStatus.RFBand[i].Bandwidth = binary.LittleEndian.Uint16(buffer[ndx+4 : ndx+6])
 		rfStatus.RFBand[i].Info = buffer[ndx+6]
 	}
-
-	//rfStatus.RFBand = binary.LittleEndian.Uint16(buffer[20:21])   [SBF_RFSTATUS_1_0_RFBAND_LENGTH]RFBand_1_0_t
 
 	log.Printf("[DEBUG] handleRFStatus - RF status block parsed into struct: %+v\n", rfStatus)
 
@@ -1132,6 +1191,564 @@ func handleRFStatus(buffer []byte, sbfJson map[string]interface{}) error {
 		rfBandArr[ndx]["info"].(map[string]interface{})["antennaID"] = rfStatus.RFBand[ndx].Info >> 6
 
 		log.Printf("[DEBUG] handleRFStatus - Parsing RF Status block completed: %+v\n", sbfJson)
+	}
+
+	return nil
+}
+
+func handlePosLocal(buffer []byte, sbfJson map[string]interface{}) error {
+	//{
+	//	"latitude": 5,
+	//	"longitude": 5,
+	//	"altitude": 5,
+	//}
+	log.Println("[DEBUG] handlePosLocal - Parsing POS Local block")
+
+	log.Printf("[DEBUG] handlePosLocal - Block length: %d\n", len(buffer))
+	log.Printf("[DEBUG] handlePosLocal - Appending response to payloads array")
+
+	var posLocal PosLocal_1_t
+
+	//We have to parse the bytes manually because using the binary.Read option
+	//does not appear to work with the way our structs are defined.
+	//
+	// blockBuffer := bytes.NewReader(buffer)
+	// binary.Read(blockBuffer, binary.LittleEndian, &rfStatus)
+
+	//Block header
+	posLocal.Header.Sync = binary.BigEndian.Uint16(buffer[:2]) //Use BigEndian for the sync field ($@) since it is character data
+	posLocal.Header.CRC = binary.LittleEndian.Uint16(buffer[2:4])
+	posLocal.Header.ID = binary.LittleEndian.Uint16([]byte{buffer[4], (buffer[5] << 3) >> 3})
+	posLocal.Header.Length = binary.LittleEndian.Uint16(buffer[6:8])
+
+	/* Time Header */
+	posLocal.TOW = binary.LittleEndian.Uint32(buffer[8:12])
+	posLocal.WNc = binary.LittleEndian.Uint16(buffer[12:14])
+
+	posLocal.Mode = buffer[14]
+	posLocal.Error = buffer[15]
+	posLocal.Lat = SBFDOUBLE(math.Float64frombits(binary.LittleEndian.Uint64(buffer[16:24])))
+	posLocal.Lon = SBFDOUBLE(math.Float64frombits(binary.LittleEndian.Uint64(buffer[24:32])))
+	posLocal.Alt = SBFDOUBLE(math.Float64frombits(binary.LittleEndian.Uint64(buffer[32:40])))
+	posLocal.Datum = buffer[40]
+
+	log.Printf("[DEBUG] handlePosLocal - POS Local block parsed into struct: %+v\n", posLocal)
+
+	//Process the data in the PosLocal_1_t struct
+
+	//TODO - Skip the Mode and Error fields for now
+
+	sbfJson["latitude"] = (180 / math.Pi) * posLocal.Lat
+	sbfJson["longitude"] = (180 / math.Pi) * posLocal.Lon
+	sbfJson["altitude"] = posLocal.Alt //posLocal.Alt
+
+	return nil
+}
+
+func handleReceiverSetup(buffer []byte, sbfJson map[string]interface{}) error {
+	//{
+	//	"markerName": "",
+	//	"markerNumber": "",
+	//	"observerName": "",
+	//	"observerAgency": "",
+	//	"receiverSerialNumber": "",
+	//	"receiverName": "",
+	//	"receiverFirmwareVersion": "",
+	//	"antennaSerialNumber": "",
+	//	"antennaType": "",
+	//	"antennaOffsetH": 0,
+	//	"antennaOffsetE": 0,
+	//	"antennaOffsetN": 0,
+	//	"markerType": "",
+	//	"gnssFirmwareVersion": "",
+	//	"productName": "",
+	//	"latitude": 0,
+	//	"longitude": 0,
+	//	"altitude": 0,
+	//	"igsStationCode": "",
+	//	"monumentIndex": 0,
+	//	"receiverIndex": 0,
+	//	"countryCode": "",
+	//}
+
+	log.Println("[DEBUG] handleReceiverSetup - Parsing ReceiverSetup block")
+
+	log.Printf("[DEBUG] handleReceiverSetup - Block length: %d\n", len(buffer))
+	log.Printf("[DEBUG] handleReceiverSetup - Appending response to payloads array")
+
+	var recSetup ReceiverSetup_1_t
+
+	sbfID := binary.LittleEndian.Uint16([]byte{buffer[4], (buffer[5] << 3) >> 3})
+	log.Printf("[DEBUG] handleReceiverSetup - sbfID: %d\n", sbfID)
+
+	version := buffer[5] >> 5
+	log.Printf("[DEBUG] handleReceiverSetup - version: %d\n", version)
+
+	//Block header
+	recSetup.Header.Sync = binary.BigEndian.Uint16(buffer[:2]) //Use BigEndian for the sync field ($@) since it is character data
+	recSetup.Header.CRC = binary.LittleEndian.Uint16(buffer[2:4])
+	recSetup.Header.ID = sbfID
+	recSetup.Header.Length = binary.LittleEndian.Uint16(buffer[6:8])
+
+	/* Time Header */
+	recSetup.TOW = binary.LittleEndian.Uint32(buffer[8:12])
+	recSetup.WNc = binary.LittleEndian.Uint16(buffer[12:14])
+	copy(recSetup.Reserved[:], buffer[14:16])
+	copy(recSetup.MarkerName[:], buffer[16:76])
+	copy(recSetup.MarkerNumber[:], buffer[76:96])
+	copy(recSetup.Observer[:], buffer[96:116])
+	copy(recSetup.Agency[:], buffer[116:156])
+	copy(recSetup.RxSerialNbr[:], buffer[156:176])
+	copy(recSetup.RxName[:], buffer[176:196])
+	copy(recSetup.RxVersion[:], buffer[196:216])
+	copy(recSetup.AntSerialNbr[:], buffer[216:236])
+	copy(recSetup.AntType[:], buffer[236:256])
+	recSetup.deltaH = math.Float32frombits(binary.LittleEndian.Uint32(buffer[256:260]))
+	recSetup.deltaE = math.Float32frombits(binary.LittleEndian.Uint32(buffer[260:264]))
+	recSetup.deltaN = math.Float32frombits(binary.LittleEndian.Uint32(buffer[264:268]))
+
+	if version >= 1 {
+		copy(recSetup.MarkerType[:], buffer[268:288])
+	}
+
+	if version >= 2 {
+		copy(recSetup.GNSSFWVersion[:], buffer[288:328])
+	}
+
+	if version >= 3 {
+		copy(recSetup.ProductName[:], buffer[328:368])
+	}
+
+	if version >= 4 {
+		recSetup.Latitude = SBFDOUBLE(math.Float64frombits(binary.LittleEndian.Uint64(buffer[368:376])))
+		recSetup.Longitude = SBFDOUBLE(math.Float64frombits(binary.LittleEndian.Uint64(buffer[376:384])))
+		recSetup.Height = math.Float32frombits(binary.LittleEndian.Uint32(buffer[384:388]))
+		copy(recSetup.StationCode[:], buffer[388:398])
+		recSetup.MonumentIdx = buffer[398]
+		recSetup.ReceiverIdx = buffer[399]
+		copy(recSetup.CountryCode[:], buffer[400:403])
+	}
+
+	log.Printf("[DEBUG] handleReceiverSetup - Receiver Setup block parsed into struct: %+v\n", recSetup)
+
+	//Process the data in the ReceiverSetup_1_t struct
+	sbfJson["markerName"] = strings.Trim(string(recSetup.MarkerName[:]), "\u0000")
+	sbfJson["markerNumber"] = strings.Trim(string(recSetup.MarkerNumber[:]), "\u0000")
+	sbfJson["observerName"] = strings.Trim(string(recSetup.Observer[:]), "\u0000")
+	sbfJson["observerAgency"] = strings.Trim(string(recSetup.Agency[:]), "\u0000")
+	sbfJson["receiverSerialNumber"] = strings.Trim(string(recSetup.RxSerialNbr[:]), "\u0000")
+	sbfJson["receiverName"] = strings.Trim(string(recSetup.RxName[:]), "\u0000")
+	sbfJson["receiverFirmwareVersion"] = strings.Trim(string(recSetup.RxVersion[:]), "\u0000")
+	sbfJson["antennaSerialNumber"] = strings.Trim(string(recSetup.AntSerialNbr[:]), "\u0000")
+	sbfJson["antennaType"] = strings.Trim(string(recSetup.AntType[:]), "\u0000")
+	sbfJson["antennaOffsetH"] = recSetup.deltaH
+	sbfJson["antennaOffsetE"] = recSetup.deltaE
+	sbfJson["antennaOffsetN"] = recSetup.deltaN
+
+	if version >= 1 {
+		sbfJson["markerType"] = strings.Trim(string(recSetup.MarkerType[:]), "\u0000")
+	}
+
+	if version >= 2 {
+		sbfJson["gnssFirmwareVersion"] = strings.Trim(string(recSetup.GNSSFWVersion[:]), "\u0000")
+	}
+
+	if version >= 3 {
+		sbfJson["productName"] = strings.Trim(string(recSetup.ProductName[:]), "\u0000")
+	}
+
+	if version >= 4 {
+		sbfJson["latitude"] = (180 / math.Pi) * recSetup.Latitude
+		sbfJson["longitude"] = (180 / math.Pi) * recSetup.Longitude
+		sbfJson["altitude"] = recSetup.Height
+		sbfJson["igsStationCode"] = strings.Trim(string(recSetup.StationCode[:]), "\u0000")
+		sbfJson["monumentIndex"] = recSetup.MonumentIdx
+		sbfJson["receiverIndex"] = recSetup.ReceiverIdx
+		sbfJson["countryCode"] = strings.Trim(string(recSetup.CountryCode[:]), "\u0000")
+	}
+
+	return nil
+}
+
+func handleReceiverStatus(buffer []byte, sbfJson map[string]interface{}) error {
+	//{
+	//	"cpuLoad": 0,
+	//	"sisError": true|false,
+	//	"diffCorrError": true|false,
+	//	"extSensorError": true|false,
+	//	"setupError": true|false,
+	//	"upTime": 0,
+	//	"hasActiveAntenna": true|false,
+	//	"extFreqRefDetected": true|false,
+	//	"pulseOnTimeSyncDetected": true|false,
+	//	"weekNumberSet": true|false,
+	//	"towSet": true|false,
+	//	"towWithinLimit": true|false,
+	//	"internalDiskActivity": true|false,
+	//	"internalDiskFull": true|false,
+	//	"internalDiskMounted": true|false,
+	//	"internalAntennaUsed": true|false,
+	//	"refOutLocked": true|false,
+	//	"lbandAntennaUsed": true|false,
+	//	"externalDiskActivity": true|false,
+	//	"externalDiskFull": true|false,
+	//	"externalDiskMounted": true|false,
+	//	"ppsInCal": true|false,
+	//	"diffCorrIn": true|false,
+	//	"hasInternetAccess": true|false,
+	//	"softwareError": true|false,
+	//	"watchdogExpired": true|false,
+	//	"antennaOvercurrent": true|false,
+	//	"outputDataCongestion": true|false,
+	//	"extEventCongestion": true|false,
+	//	"cpuOverload": true|false,
+	//	"invalidConfiguration": true|false,
+	//	"outOfGeofence": true|false,
+	//	"configCommandCount": 0,
+	//	"temperature": 0,
+	//	"agcStates": [
+	//		{
+	//			"frontEndCode": 0,
+	//			"antennaId": 0,
+	//			"agcGain": 0,
+	//			"ifSampleVariance": 0,
+	//			"samplesBlankePercent": 0,
+	//		}
+	//	],
+	//}
+	log.Println("[DEBUG] handleReceiverStatus - Parsing ReceiverSetup block")
+	log.Printf("[DEBUG] handleReceiverStatus - Block length: %d\n", len(buffer))
+	log.Printf("[DEBUG] handleReceiverStatus - Appending response to payloads array")
+
+	var recStatus ReceiverStatus_2_t
+
+	//Block header
+	recStatus.Header.Sync = binary.BigEndian.Uint16(buffer[:2]) //Use BigEndian for the sync field ($@) since it is character data
+	recStatus.Header.CRC = binary.LittleEndian.Uint16(buffer[2:4])
+	recStatus.Header.ID = binary.LittleEndian.Uint16([]byte{buffer[4], (buffer[5] << 3) >> 3})
+	recStatus.Header.Length = binary.LittleEndian.Uint16(buffer[6:8])
+
+	/* Time Header */
+	recStatus.TOW = binary.LittleEndian.Uint32(buffer[8:12])
+	recStatus.WNc = binary.LittleEndian.Uint16(buffer[12:14])
+
+	recStatus.CPULoad = buffer[14]
+	recStatus.ExtError = buffer[15]
+	recStatus.UpTime = binary.LittleEndian.Uint32(buffer[16:20])
+	recStatus.RxStatus = binary.LittleEndian.Uint32(buffer[20:24])
+	recStatus.RxError = binary.LittleEndian.Uint32(buffer[24:28])
+	recStatus.N = buffer[28]
+	recStatus.SBSize = buffer[29]
+	recStatus.CmdCount = buffer[30]
+	recStatus.Temperature = buffer[31]
+
+	log.Printf("[DEBUG] handlePosLocal - ReceiverStatus block parsed into struct: %+v\n", recStatus)
+
+	//AGCState
+	for i, ndx := 0, 32; i < int(recStatus.N); i, ndx = i+1, ndx+int(recStatus.SBSize) {
+		recStatus.AGCState[i].FrontendID = buffer[ndx]
+		recStatus.AGCState[i].Gain = int8(buffer[ndx+1])
+		recStatus.AGCState[i].SampleVar = buffer[ndx+2]
+		recStatus.AGCState[i].BlankingStat = buffer[ndx+3]
+	}
+
+	//Process the data in the ReceiverSetup_1_t struct
+	sbfJson["cpuLoad"] = recStatus.CPULoad
+
+	//ExtError
+	//log.Printf("[DEBUG] handleReceiverStatus - ExtError: %d\n", recStatus.ExtError)
+
+	//bit 0
+	if recStatus.ExtError&1 != 0 {
+		sbfJson["sisError"] = true
+	} else {
+		sbfJson["sisError"] = false
+	}
+
+	//bit 1
+	if recStatus.ExtError&(1<<1) != 0 {
+		sbfJson["diffCorrError"] = true
+	} else {
+		sbfJson["diffCorrError"] = false
+	}
+
+	//bit 2
+	if recStatus.ExtError&(1<<2) != 0 {
+		sbfJson["extSensorError"] = true
+	} else {
+		sbfJson["extSensorError"] = false
+	}
+
+	//bit 3
+	if recStatus.ExtError&(1<<3) != 0 {
+		sbfJson["setupError"] = true
+	} else {
+		sbfJson["setupError"] = false
+	}
+
+	sbfJson["upTime"] = recStatus.UpTime
+
+	//log.Printf("[DEBUG] handleReceiverStatus - RxStatus: %d\n", recStatus.RxStatus)
+
+	//RxStatus
+	//bit 1
+	if recStatus.RxStatus&(1<<1) != 0 {
+		sbfJson["hasActiveAntenna"] = true
+	} else {
+		sbfJson["hasActiveAntenna"] = false
+	}
+
+	//bit 2
+	if recStatus.RxStatus&(1<<2) != 0 {
+		sbfJson["extFreqRefDetected"] = true
+	} else {
+		sbfJson["extFreqRefDetected"] = false
+	}
+
+	//bit 3
+	if recStatus.RxStatus&(1<<3) != 0 {
+		sbfJson["pulseOnTimeSyncDetected"] = true
+	} else {
+		sbfJson["pulseOnTimeSyncDetected"] = false
+	}
+
+	//bit 4
+	if recStatus.RxStatus&(1<<4) != 0 {
+		sbfJson["weekNumberSet"] = true
+	} else {
+		sbfJson["weekNumberSet"] = false
+	}
+
+	//bit 5
+	if recStatus.RxStatus&(1<<5) != 0 {
+		sbfJson["towSet"] = true
+	} else {
+		sbfJson["towSet"] = false
+	}
+
+	//bit 6
+	if recStatus.RxStatus&(1<<6) != 0 {
+		sbfJson["towWithinLimit"] = true
+	} else {
+		sbfJson["towWithinLimit"] = false
+	}
+
+	//bit 7
+	if recStatus.RxStatus&(1<<7) != 0 {
+		sbfJson["internalDiskActivity"] = true
+	} else {
+		sbfJson["internalDiskActivity"] = false
+	}
+
+	//bit 8
+	if recStatus.RxStatus&(1<<8) != 0 {
+		sbfJson["internalDiskFull"] = true
+	} else {
+		sbfJson["internalDiskFull"] = false
+	}
+
+	//bit 9
+	if recStatus.RxStatus&(1<<9) != 0 {
+		sbfJson["internalDiskMounted"] = true
+	} else {
+		sbfJson["internalDiskMounted"] = false
+	}
+
+	//bit 10
+	if recStatus.RxStatus&(1<<10) != 0 {
+		sbfJson["internalAntennaUsed"] = true
+	} else {
+		sbfJson["internalAntennaUsed"] = false
+	}
+
+	//bit 11
+	if recStatus.RxStatus&(1<<11) != 0 {
+		sbfJson["refOutLocked"] = true
+	} else {
+		sbfJson["refOutLocked"] = false
+	}
+
+	//bit 12
+	if recStatus.RxStatus&(1<<12) != 0 {
+		sbfJson["lbandAntennaUsed"] = true
+	} else {
+		sbfJson["lbandAntennaUsed"] = false
+	}
+
+	//bit 13
+	if recStatus.RxStatus&(1<<13) != 0 {
+		sbfJson["externalDiskActivity"] = true
+	} else {
+		sbfJson["externalDiskActivity"] = false
+	}
+
+	//bit 14
+	if recStatus.RxStatus&(1<<14) != 0 {
+		sbfJson["externalDiskFull"] = true
+	} else {
+		sbfJson["externalDiskFull"] = false
+	}
+
+	//bit 15
+	if recStatus.RxStatus&(1<<15) != 0 {
+		sbfJson["externalDiskMounted"] = true
+	} else {
+		sbfJson["externalDiskMounted"] = false
+	}
+
+	//bit 16
+	if recStatus.RxStatus&(1<<16) != 0 {
+		sbfJson["ppsInCal"] = true
+	} else {
+		sbfJson["ppsInCal"] = false
+	}
+
+	//bit 17
+	if recStatus.RxStatus&(1<<17) != 0 {
+		sbfJson["diffCorrIn"] = true
+	} else {
+		sbfJson["diffCorrIn"] = false
+	}
+
+	//bit 18
+	if recStatus.RxStatus&(1<<18) != 0 {
+		sbfJson["hasInternetAccess"] = true
+	} else {
+		sbfJson["hasInternetAccess"] = false
+	}
+
+	//RxError
+	//log.Printf("[DEBUG] handleReceiverStatus - RxError: %d\n", recStatus.RxError)
+	//bit 3
+	if recStatus.RxError&(1<<3) != 0 {
+		sbfJson["softwareError"] = true
+	} else {
+		sbfJson["softwareError"] = false
+	}
+
+	//bit 4
+	if recStatus.RxError&(1<<4) != 0 {
+		sbfJson["watchdogExpired"] = true
+	} else {
+		sbfJson["watchdogExpired"] = false
+	}
+
+	//bit 5
+	if recStatus.RxError&(1<<5) != 0 {
+		sbfJson["antennaOvercurrent"] = true
+	} else {
+		sbfJson["antennaOvercurrent"] = false
+	}
+
+	//bit 6
+	if recStatus.RxError&(1<<6) != 0 {
+		sbfJson["outputDataCongestion"] = true
+	} else {
+		sbfJson["outputDataCongestion"] = false
+	}
+
+	//bit 8
+	if recStatus.RxError&(1<<8) != 0 {
+		sbfJson["extEventCongestion"] = true
+	} else {
+		sbfJson["extEventCongestion"] = false
+	}
+
+	//bit 9
+	if recStatus.RxError&(1<<9) != 0 {
+		sbfJson["cpuOverload"] = true
+	} else {
+		sbfJson["cpuOverload"] = false
+	}
+
+	//bit 10
+	if recStatus.RxError&(1<<10) != 0 {
+		sbfJson["invalidConfiguration"] = true
+	} else {
+		sbfJson["invalidConfiguration"] = false
+	}
+
+	//bit 11
+	if recStatus.RxError&(1<<11) != 0 {
+		sbfJson["outOfGeofence"] = true
+	} else {
+		sbfJson["outOfGeofence"] = false
+	}
+
+	sbfJson["configCommandCount"] = recStatus.CmdCount
+
+	//temperature listed as not applicable
+	//sbfJson["temperature"] = recStatus.Temperature
+
+	//Process each AGCState sub-block
+	agcStateArr := make([]map[string]interface{}, recStatus.N)
+	sbfJson["agcStates"] = agcStateArr
+
+	for ndx := 0; ndx < int(recStatus.N); ndx++ {
+		log.Printf("[DEBUG] handleReceiverStatus - FrontendID: %d\n", recStatus.AGCState[ndx].FrontendID)
+
+		agcStateArr[ndx] = map[string]interface{}{
+			"frontEndCode":         (recStatus.AGCState[ndx].FrontendID << 5) >> 5, //Shift bits 5-7 out
+			"antennaId":            recStatus.AGCState[ndx].FrontendID >> 5,
+			"agcGain":              recStatus.AGCState[ndx].Gain,
+			"ifSampleVariance":     recStatus.AGCState[ndx].SampleVar,
+			"samplesBlankePercent": recStatus.AGCState[ndx].BlankingStat,
+		}
+	}
+
+	return nil
+}
+
+func handleQualityInd(buffer []byte, sbfJson map[string]interface{}) error {
+	//{
+	//	"qualityIndicators": [
+	//		{
+	//			"type": 0,
+	//			"value": 0
+	//		}
+	//	]
+	//}
+
+	log.Println("[DEBUG] handleQualityInd - Parsing QualityInd block")
+
+	log.Printf("[DEBUG] handleQualityInd - Block length: %d\n", len(buffer))
+	log.Printf("[DEBUG] handleQualityInd - Appending response to payloads array")
+
+	var qualityInd QualityInd_1_t
+
+	//Block header
+	qualityInd.Header.Sync = binary.BigEndian.Uint16(buffer[:2]) //Use BigEndian for the sync field ($@) since it is character data
+	qualityInd.Header.CRC = binary.LittleEndian.Uint16(buffer[2:4])
+	qualityInd.Header.ID = binary.LittleEndian.Uint16([]byte{buffer[4], (buffer[5] << 3) >> 3})
+	qualityInd.Header.Length = binary.LittleEndian.Uint16(buffer[6:8])
+
+	/* Time Header */
+	qualityInd.TOW = binary.LittleEndian.Uint32(buffer[8:12])
+	qualityInd.WNc = binary.LittleEndian.Uint16(buffer[12:14])
+
+	qualityInd.N = buffer[14]
+	// 	Reserved   uint8
+
+	//AGCState
+	for i, ndx := 0, 16; i < int(qualityInd.N); i, ndx = i+1, ndx+2 {
+		qualityInd.Indicators[i] = binary.LittleEndian.Uint16(buffer[ndx : ndx+2])
+	}
+
+	log.Printf("[DEBUG] handlePosLocal - QualityInd block parsed into struct: %+v\n", qualityInd)
+
+	//Process the data in the QualityInd_1_t struct
+
+	//Process each AGCState sub-block
+	qIndArr := make([]map[string]interface{}, qualityInd.N)
+	sbfJson["qualityIndicators"] = qIndArr
+
+	for ndx := 0; ndx < int(qualityInd.N); ndx++ {
+		log.Printf("[DEBUG] handleReceiverStatus - quality indicator: %d\n", qualityInd.Indicators[ndx])
+
+		qIndArr[ndx] = map[string]interface{}{
+			"type":  (qualityInd.Indicators[ndx] << 8) >> 8,  //Shift left byte out
+			"value": (qualityInd.Indicators[ndx] << 4) >> 12, //Shift bits 12-15 out, Shift right byte out,
+		}
 	}
 
 	return nil
