@@ -222,6 +222,7 @@ func parseASCIICommandReply(buffer *[]byte, ndx int, payloads *[]map[string]inte
 		response := map[string]interface{}{
 			"dataType":  recordTypeAsciiCommandReply,
 			"timestamp": time.Now().UTC().Format(time.RFC3339),
+			"portName":  string((*buffer)[endIndex-promptLength : endIndex-1]),
 		}
 
 		//Remove the prompt and \r\n from the response
@@ -568,7 +569,6 @@ func parseNMEA(buffer *[]byte, ndx int, payloads *[]map[string]interface{}) (int
 		}
 		return -1, notEnoughData
 	}
-
 }
 
 func handleSbfBlock(buffer []byte, sbfJson map[string]interface{}) error {
@@ -963,11 +963,8 @@ func handleSbfBlock(buffer []byte, sbfJson map[string]interface{}) error {
 	// case sbfnr_ChannelStatus_1: //= 4013
 	// //case sbfid_ChannelStatus_1_0: //= 4013 | 0x0
 	case sbfnr_ReceiverStatus_2: //= 4014
-		//case sbfid_ReceiverStatus_2_0: //= 4014 | 0x0
-		//case sbfid_ReceiverStatus_2_1: //= 4014 | 0x2000
 		sbfJson["blockType"] = "receiverStatus"
 		return handleReceiverStatus(buffer, sbfJson["block"].(map[string]interface{}))
-
 	// case sbfnr_SatVisibility_1: //= 4012
 	// //case sbfid_SatVisibility_1_0: //= 4012 | 0x0
 	// case sbfnr_InputLink_1: //= 4090
@@ -1001,7 +998,6 @@ func handleSbfBlock(buffer []byte, sbfJson map[string]interface{}) error {
 	// case sbfnr_PowerStatus_1: //= 4101
 	// //case sbfid_PowerStatus_1_0: //= 4101 | 0x0
 	case sbfnr_QualityInd_1: //= 4082
-		// //case sbfid_QualityInd_1_0: //= 4082 | 0x0
 		sbfJson["blockType"] = "qualityInd"
 		return handleQualityInd(buffer, sbfJson["block"].(map[string]interface{}))
 	// case sbfnr_DiskStatus_1: //= 4059
