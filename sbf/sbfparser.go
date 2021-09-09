@@ -13,8 +13,8 @@ import (
 )
 
 const (
-	promptRegExp                     = `COM\d>|USB\d>|OTG\d>|IP\d{2}>|BT\d{2}>` ///< regular expression defining what a prompt looks like
-	promptLength                     = 5                                        ///< length of a prompt
+	promptRegExp                     = `COM\d>|USB\d>|OTG\d>|IP\d{2}>|BT\d{2}>|STOP>` ///< regular expression defining what a prompt looks like
+	promptLength                     = 5                                              ///< length of a prompt
 	maxASCIIDisplaySize              = 16384
 	maxFormattedInformationBlockSize = 4096
 	maxASCIICommandReplySize         = 4096
@@ -264,31 +264,32 @@ func parseASCIIDisplay(buffer *[]byte, ndx int, payloads *[]map[string]interface
 		return -1, notEnoughData
 	}
 
-	endIndex := strings.Index(string((*buffer)[ndx:]), "\r\n####>\r\n")
+	//This doesn't work because we don't get a command prompt from the ascii data
+	endIndex, notEnoughData := searchEndOfAsciiMessage(buffer, ndx, maxASCIIDisplaySize)
+	//endIndex := strings.Index(string((*buffer)[ndx:]), "\r\n####>")
 	if endIndex != -1 && (endIndex < ndx+maxASCIIDisplaySize) {
-		// the $TD is followed by \r\n, which is also stripped
-
-		// QString asciiDisplayContents = mBuffer.mid(startIndex + 5, endIndex - (startIndex+5));
-		// emit newASCIIDisplay(asciiDisplayContents);
+		log.Printf("[DEBUG] parseASCIIDisplay - Command response: %s\n", string((*buffer)[ndx:endIndex-1]))
 
 		response := map[string]interface{}{
 			"dataType":  recordTypeAsciiDisplay,
 			"timestamp": time.Now().UTC().Format(time.RFC3339),
 		}
 
-		response[recordTypeAsciiDisplay] = string((*buffer)[ndx+5 : endIndex-5])
+		//Remove the prompt and \r\n from the response
+		response[recordTypeAsciiDisplay] = string((*buffer)[ndx : endIndex-promptLength-2])
 
-		log.Println("[DEBUG] parseASCIICommandReply - Appending response to payloads array")
+		log.Println("[DEBUG] parseASCIIDisplay - Appending response to payloads array")
 		*payloads = append(*payloads, response)
 
-		return endIndex + 9 - ndx, notEnoughData // total processed bytes, including start and end delimiters
-	} else {
-		if endIndex == -1 && (len(*buffer) < ndx+maxASCIIDisplaySize) {
-			notEnoughData = true
-		} else {
-			// maximum length of ASCII display exceeded without finding the end
-			notEnoughData = false
+		//consume "\r\n" if present
+		if len(*buffer) > endIndex && (*buffer)[endIndex] == '\r' {
+			endIndex++
+			if len(*buffer) > endIndex && (*buffer)[endIndex] == '\n' {
+				endIndex++
+			}
 		}
+		return endIndex - ndx, notEnoughData
+	} else {
 		return -1, notEnoughData
 	}
 }
@@ -301,6 +302,7 @@ func searchEndOfAsciiMessage(buffer *[]byte, startIndex int, maxLength int) (int
 	for ndx != -1 && ndx <= startIndex+maxLength-promptLength {
 		ndx += 2 // consume the "\r\n" sequence
 
+		//See if the buffer starts with a command prompt
 		if len(*buffer) > ndx+promptLength-1 && (*buffer)[ndx+promptLength-1] == '>' {
 			endSequence := (*buffer)[ndx : ndx+promptLength]
 			matched, err := regexp.Match(promptRegExp, endSequence)
@@ -360,15 +362,12 @@ func parseEvent(buffer *[]byte, ndx int, payloads *[]map[string]interface{}) (in
 	endIndex := strings.Index(string((*buffer)[ndx:]), "\r\n")
 
 	if endIndex != -1 && endIndex < ndx+maxEventSize {
-		// QString event = mBuffer.mid(startIndex + 4, endIndex - (startIndex+4));
-		// emit newEvent(event);
-
 		response := map[string]interface{}{
 			"dataType":  recordTypeEvent,
 			"timestamp": time.Now().UTC().Format(time.RFC3339),
 		}
 
-		response[recordTypeEvent] = string((*buffer)[ndx+4 : endIndex-4])
+		response[recordTypeEvent] = string((*buffer)[ndx+4 : endIndex])
 
 		log.Println("[DEBUG] parseASCIICommandReply - Appending response to payloads array")
 		*payloads = append(*payloads, response)
