@@ -212,7 +212,9 @@ func readWorker() {
 		if adapterSettings.ConnectionType == "serial" {
 			port.(serial.Port).Close()
 		} else {
-			port.(net.Conn).Close()
+
+			//TODO - This does not appear to work, the call to close never returns
+			//port.(net.Conn).Close()
 		}
 	}()
 
@@ -243,9 +245,12 @@ func readWorker() {
 					}
 				}
 
-				//TODO - Should we exit with a fatal error?
-				//TODO - Need to see if we get EOF errors: Not receiving them with tcp
+				//TODO - We receive EOF errors on TCP. In this case, we may as well exit since this indicates a problem with
+				//the TCP connection.
+				//
+				// Need to verify if this is the correct approach for Serial
 				log.Printf("[ERROR] readWorker - Error reading from %s port on GNSS Receiver: %+v\n", adapterSettings.ConnectionType, err)
+				return
 			}
 
 			if n > 0 {
