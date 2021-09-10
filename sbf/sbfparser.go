@@ -1683,7 +1683,7 @@ func handleReceiverStatus(buffer []byte, sbfJson map[string]interface{}) error {
 		log.Printf("[DEBUG] handleReceiverStatus - FrontendID: %d\n", recStatus.AGCState[ndx].FrontendID)
 
 		agcStateArr[ndx] = map[string]interface{}{
-			"frontEndCode":          (recStatus.AGCState[ndx].FrontendID << 5) >> 5, //Shift bits 5-7 out
+			"frontEndCode":          (recStatus.AGCState[ndx].FrontendID << 3) >> 3, //Shift bits 5-7 out
 			"antennaId":             recStatus.AGCState[ndx].FrontendID >> 5,
 			"agcGain":               recStatus.AGCState[ndx].Gain,
 			"ifSampleVariance":      recStatus.AGCState[ndx].SampleVar,
