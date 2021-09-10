@@ -1407,7 +1407,7 @@ func handleReceiverStatus(buffer []byte, sbfJson map[string]interface{}) error {
 	//			"antennaId": 0,
 	//			"agcGain": 0,
 	//			"ifSampleVariance": 0,
-	//			"samplesBlankePercent": 0,
+	//			"samplesBlankedPercent": 0,
 	//		}
 	//	],
 	//}
@@ -1683,11 +1683,11 @@ func handleReceiverStatus(buffer []byte, sbfJson map[string]interface{}) error {
 		log.Printf("[DEBUG] handleReceiverStatus - FrontendID: %d\n", recStatus.AGCState[ndx].FrontendID)
 
 		agcStateArr[ndx] = map[string]interface{}{
-			"frontEndCode":         (recStatus.AGCState[ndx].FrontendID << 5) >> 5, //Shift bits 5-7 out
-			"antennaId":            recStatus.AGCState[ndx].FrontendID >> 5,
-			"agcGain":              recStatus.AGCState[ndx].Gain,
-			"ifSampleVariance":     recStatus.AGCState[ndx].SampleVar,
-			"samplesBlankePercent": recStatus.AGCState[ndx].BlankingStat,
+			"frontEndCode":          (recStatus.AGCState[ndx].FrontendID << 5) >> 5, //Shift bits 5-7 out
+			"antennaId":             recStatus.AGCState[ndx].FrontendID >> 5,
+			"agcGain":               recStatus.AGCState[ndx].Gain,
+			"ifSampleVariance":      recStatus.AGCState[ndx].SampleVar,
+			"samplesBlankedPercent": recStatus.AGCState[ndx].BlankingStat,
 		}
 	}
 
