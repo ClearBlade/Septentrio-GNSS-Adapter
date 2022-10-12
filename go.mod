@@ -1,12 +1,21 @@
 module Septentrio-GNSS-Adapter
 
-go 1.16
+go 1.18
 
 require (
-	github.com/clearblade/adapter-go-library v0.0.0-00010101000000-000000000000
+	github.com/clearblade/adapter-go-library v0.0.3-0.20220923194251-ad52825a6f7c
 	github.com/clearblade/mqtt_parsing v0.0.0-20160301165118-6ae49eac0961
 	github.com/snksoft/crc v1.1.0
-	github.com/tarm/serial v0.0.0-20180830185346-98f6abe2eb07
-	go.bug.st/serial v1.3.1 // indirect
-	golang.org/x/net v0.0.0-20210726213435-c6fcb2dbf985 // indirect
+	go.bug.st/serial v1.4.0
+)
+
+require (
+	github.com/clearblade/Go-SDK v0.0.0-20220811134357-78291979ad51 // indirect
+	github.com/clearblade/go-utils v1.1.4 // indirect
+	github.com/clearblade/paho.mqtt.golang v1.1.1 // indirect
+	github.com/creack/goselect v0.1.2 // indirect
+	github.com/hashicorp/logutils v1.0.0 // indirect
+	github.com/pkg/errors v0.8.1 // indirect
+	golang.org/x/net v0.0.0-20211101193420-4a448f8816b3 // indirect
+	golang.org/x/sys v0.0.0-20210823070655-63515b42dcdf // indirect
 )

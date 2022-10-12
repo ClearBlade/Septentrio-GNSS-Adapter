@@ -33,7 +33,7 @@ const (
 func Parse(buffer *[]byte, payloads *[]map[string]interface{}) {
 	done := false
 
-	log.Printf("[DEBUG] Parse - Buffer to parse: %s\n", string(*buffer))
+	//log.Printf("[DEBUG] Parse - Buffer to parse: %s\n", string(*buffer))
 
 	for !done {
 		// We are looking for either

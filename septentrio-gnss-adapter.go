@@ -339,12 +339,14 @@ func writeToPort(payload []byte) {
 	//can be processed by the septentrio gnss receiver
 	if adapterSettings.ConnectionType == "serial" {
 		if port != nil {
+			log.Println("[DEBUG] writeToPort - Sending payload to serial port")
 			writeToSerialPort(append(payload, "\n"...))
 		} else {
 			log.Print("[ERROR] writeToPort - Cannot write to serial port. Port not open.\n")
 		}
 	} else if adapterSettings.ConnectionType == "tcp" {
 		if port != nil {
+			log.Println("[DEBUG] writeToPort - Sending payload to tcp port")
 			writeToTcpPort(append(payload, "\n"...))
 		} else {
 			log.Print("[ERROR] writeToPort - Cannot write to tcp port. Port not open.\n")
@@ -372,5 +374,6 @@ func writeToTcpPort(bytes []byte) {
 
 func cbMessageHandler(message *mqttTypes.Publish) {
 	//TODO - Add code to construct the appropriate payload
+	log.Printf("[DEBUG] cbMessageHandler - Message received from platform: %#v", message.Payload)
 	writeToPort(message.Payload)
 }
