@@ -24,7 +24,7 @@ type SBFDOUBLE float64
 /*--Block Header : ----------------------------------------------------------*/
 /** Block Header */
 type BlockHeader_t struct {
-	Sync   uint16
+	Sync   string
 	CRC    uint16
 	ID     uint16
 	Length uint16

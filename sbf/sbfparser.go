@@ -13,8 +13,8 @@ import (
 )
 
 const (
-	promptRegExp                     = `COM\d>|USB\d>|OTG\d>|IP\d{2}>|BT\d{2}>|STOP>` ///< regular expression defining what a prompt looks like
-	promptLength                     = 5                                              ///< length of a prompt
+	promptRegExp                     = `COM\d>|USB\d>|OTG\d>|IP\d{2}>|IPS\d|IPR\d|NTR\d|BT\d{2}>|STOP>` ///< regular expression defining what a prompt looks like
+	promptLength                     = 5                                                                ///< length of a prompt
 	maxASCIIDisplaySize              = 16384
 	maxFormattedInformationBlockSize = 4096
 	maxASCIICommandReplySize         = 4096
@@ -26,6 +26,25 @@ const (
 	recordTypeInfoBlock              = "formattedInfoBlock"
 	recordTypeNmea                   = "nmea"
 )
+
+//Each SBF block consists of a sequence of numeric or alphanumeric fields of different types and sizes.
+//The total block size is always a multiple of 4 bytes.
+//
+//Each multi-byte binary type is transmitted as little-endian, meaning that the least significant byte
+//is the first one to be transmitted by the receiver. Signed integers are coded as two’s complement.
+//
+//
+//The fields of an SBF block may have one of the following types:
+//	Type 	Description
+//	u1 		Unsigned integer on 1 byte (8 bits)
+//	u2 		Unsigned integer on 2 bytes (16 bits)
+//	u4 		Unsigned integer on 4 bytes (32 bits)
+//	i1 		Signed integer on 1 byte (8 bits)
+//	i2 		Signed integer on 2 bytes (16 bits)
+//	i4 		Signed integer on 4 bytes (32 bits)
+//	f4 		IEEE float on 4 bytes (32 bits)
+//	f8 		IEEE float on 8 bytes (64 bits)
+//	c1[X] String of X ASCII characters, right padded with bytes set to 0 if needed.
 
 //var hasPrompt bool = false
 
@@ -52,14 +71,16 @@ func Parse(buffer *[]byte, payloads *[]map[string]interface{}) {
 		if ndx < bufferSize {
 			if (*buffer)[ndx] == '>' {
 				// '>' terminates a prompt
+				log.Println("[DEBUG] Parse - HANDLING COMMAND PROMPT")
 				done = handleCommandPrompt(buffer, ndx, payloads)
 			} else {
 				// '$' was found
+				log.Println("[DEBUG] Parse - HANDLING RECEIVED DATA")
 				done = handleReceivedData(buffer, ndx, payloads)
 			}
 		} else {
 			// We've reached the end of the buffer with nothing found. Discard all data,
-			//except for the last PromptLength-1, because we may have the start of a new prompt
+			// except for the last PromptLength-1, because we may have the start of a new prompt
 			done = true
 			if bufferSize > promptLength-1 {
 				*buffer = (*buffer)[promptLength-1:]
@@ -208,17 +229,7 @@ func parseASCIICommandReply(buffer *[]byte, ndx int, payloads *[]map[string]inte
 
 	if endIndex != -1 {
 		log.Printf("[DEBUG] parseASCIICommandReply - Command response: %s\n", string((*buffer)[ndx:endIndex-1]))
-		// QString prompt = mBuffer.mid(endIndex - sPromptLength, sPromptLength);
-		// bool error = (mBuffer.at(startIndex + 2) == '?');
-		// emit newCommandReply(mBuffer.mid(startIndex, endIndex - startIndex - prompt.size() - 2), error);
 
-		// if (prompt == "STOP>") {
-		//   emit stopReceived();
-		//   mPromptTimer.stop();
-		// }
-		// else if (prompt != "---->") {
-		//   setPrompt(prompt);
-		// }
 		response := map[string]interface{}{
 			"dataType":  recordTypeAsciiCommandReply,
 			"timestamp": time.Now().UTC().Format(time.RFC3339),
@@ -309,12 +320,9 @@ func searchEndOfAsciiMessage(buffer *[]byte, startIndex int, maxLength int) (int
 			if err != nil {
 				log.Printf("[ERROR] searchEndOfAsciiMessage - Error evaluating regular expression: %s\n", err.Error())
 			} else {
-				// Look for a command prompt only. This allows us to group the command response
-				// and the formatted information blocks together
-				//
-				// if string(endSequence) == "STOP>" || string(endSequence) == "---->" ||
-				// 	string(endSequence) == "####>" || matched {
+				// See if we found a command prompt
 				if matched {
+					//Reposition the index past the command prompt
 					ndx += promptLength
 					found = true
 					break
@@ -322,7 +330,7 @@ func searchEndOfAsciiMessage(buffer *[]byte, startIndex int, maxLength int) (int
 			}
 		}
 
-		// no prompt found, so try to consume a line
+		// Since there was no prompt found, try to consume a line
 		ndx += strings.Index(string((*buffer)[ndx:]), "\r\n")
 	}
 
@@ -1102,9 +1110,6 @@ func handleRFStatus(buffer []byte, sbfJson map[string]interface{}) error {
 	//}
 	log.Println("[DEBUG] handleRFStatus - Parsing RF Status block")
 
-	log.Printf("[DEBUG] handleRFStatus - Block length: %d\n", len(buffer))
-	log.Printf("[DEBUG] handleRFStatus - Appending response to payloads array")
-
 	var rfStatus RFStatus_1_t
 
 	//We have to parse the bytes manually because using the binary.Read option
@@ -1114,27 +1119,29 @@ func handleRFStatus(buffer []byte, sbfJson map[string]interface{}) error {
 	// binary.Read(blockBuffer, binary.LittleEndian, &rfStatus)
 
 	//Block header
-	rfStatus.Header.Sync = binary.BigEndian.Uint16(buffer[:2]) //Use BigEndian for the sync field ($@) since it is character data
-	rfStatus.Header.CRC = binary.LittleEndian.Uint16(buffer[2:4])
-	rfStatus.Header.ID = binary.LittleEndian.Uint16([]byte{buffer[4], (buffer[5] << 3) >> 3})
-	rfStatus.Header.Length = binary.LittleEndian.Uint16(buffer[6:8])
+	rfStatus.Header.Sync = string(buffer[:2])                                                 //Bytes 1 and 2
+	rfStatus.Header.CRC = binary.LittleEndian.Uint16(buffer[2:4])                             //Bytes 3 and 4
+	rfStatus.Header.ID = binary.LittleEndian.Uint16([]byte{buffer[4], (buffer[5] << 3) >> 3}) //Bytes 5 and 6
+	rfStatus.Header.Length = binary.LittleEndian.Uint16(buffer[6:8])                          //bytes 7 and 8
 
 	/* Time Header */
-	rfStatus.TOW = binary.LittleEndian.Uint32(buffer[8:12])
-	rfStatus.WNc = binary.LittleEndian.Uint16(buffer[12:14])
+	rfStatus.TOW = binary.LittleEndian.Uint32(buffer[8:12])  //bytes 9, 10, 11, 12
+	rfStatus.WNc = binary.LittleEndian.Uint16(buffer[12:14]) //bytes 13, 14
 
-	rfStatus.N = buffer[14]
-	rfStatus.SBLength = buffer[15]
-	rfStatus.Flags = buffer[16]
+	rfStatus.N = buffer[14]                                          //byte 15
+	rfStatus.SBLength = buffer[15]                                   //byte 16
+	rfStatus.Flags = buffer[16]                                      //byte 17
+	rfStatus.Reserved = [3]uint8{buffer[17], buffer[18], buffer[19]} //bytes 18, 19, 20
 
-	log.Printf("[DEBUG] handleRFStatus - rfStatus: %+v\n", rfStatus)
-	log.Printf("[DEBUG] handleRFStatus - RF N: %d\n", rfStatus.N)
-
-	//RF Bands
-	for i, ndx := 0, 19; i < int(rfStatus.N); i, ndx = i+1, ndx+int(rfStatus.SBLength) {
-		rfStatus.RFBand[i].Frequency = binary.LittleEndian.Uint32(buffer[ndx : ndx+4])
-		rfStatus.RFBand[i].Bandwidth = binary.LittleEndian.Uint16(buffer[ndx+4 : ndx+6])
-		rfStatus.RFBand[i].Info = buffer[ndx+6]
+	//RF Bands (start at byte 21-index 20)
+	//Each RF Band is 8 bytes
+	//
+	//for i, ndx := 0, 19; i < int(rfStatus.N); i, ndx = i+1, ndx+int(rfStatus.SBLength) {
+	for i, ndx := 0, 20; i < int(rfStatus.N); i, ndx = i+1, ndx+int(rfStatus.SBLength) {
+		rfStatus.RFBand[i].Frequency = binary.LittleEndian.Uint32(buffer[ndx : ndx+4])   //bytes 1 - 4
+		rfStatus.RFBand[i].Bandwidth = binary.LittleEndian.Uint16(buffer[ndx+4 : ndx+6]) //bytes 5 and 6
+		rfStatus.RFBand[i].Info = buffer[ndx+6]                                          //byte 7
+		rfStatus.RFBand[i]._padding = [1]uint8{buffer[7]}                                //byte 8]
 	}
 
 	log.Printf("[DEBUG] handleRFStatus - RF status block parsed into struct: %+v\n", rfStatus)
@@ -1142,7 +1149,8 @@ func handleRFStatus(buffer []byte, sbfJson map[string]interface{}) error {
 	//Process the data in the RFStatus_1_0_t struct
 	sbfJson["numberOfBands"] = rfStatus.N
 
-	if rfStatus.Flags&(1<<7) != 0 {
+	if rfStatus.Flags != 0 {
+		//if rfStatus.Flags&(1>>7) != 0 {
 		sbfJson["spoofingSuspected"] = true
 	} else {
 		sbfJson["spoofingSuspected"] = false
@@ -1161,6 +1169,14 @@ func handleRFStatus(buffer []byte, sbfJson map[string]interface{}) error {
 		rfBandArr[ndx]["info"] = make(map[string]interface{})
 
 		//Parse info flags
+		// Bits 0-3: Mode:
+		// 	 1: This RF band is suppressed by a notch filter set manually with the command setNotchFiltering.
+		//   2: The receiver detected interference in this band, and successfully canceled it.
+		//   8: The receiver detected interference in this band. No mitigation applied.
+		// Bits 4-5: Reserved
+		// Bits 6-7: Antenna ID: 0 for main, 1 for Aux1 and 2 for Aux2
+		rfBandArr[ndx]["mode"] = (rfStatus.RFBand[ndx].Info << 4) >> 4
+
 		//bit 0
 		if rfStatus.RFBand[ndx].Info&1 != 0 {
 			rfBandArr[ndx]["info"].(map[string]interface{})["suppressedByNotchFilter"] = true
@@ -1175,8 +1191,8 @@ func handleRFStatus(buffer []byte, sbfJson map[string]interface{}) error {
 			rfBandArr[ndx]["info"].(map[string]interface{})["interferenceCancelled"] = false
 		}
 
-		//bit 2
-		if rfStatus.RFBand[ndx].Info&(1<<2) != 0 {
+		//bit 3
+		if rfStatus.RFBand[ndx].Info&(1<<3) != 0 {
 			rfBandArr[ndx]["info"].(map[string]interface{})["interferenceDetected"] = true
 		} else {
 			rfBandArr[ndx]["info"].(map[string]interface{})["interferenceDetected"] = false
@@ -1185,7 +1201,7 @@ func handleRFStatus(buffer []byte, sbfJson map[string]interface{}) error {
 		//Antenna ID: bits 6 and 7
 		rfBandArr[ndx]["info"].(map[string]interface{})["antennaID"] = rfStatus.RFBand[ndx].Info >> 6
 
-		log.Printf("[DEBUG] handleRFStatus - Parsing RF Status block completed: %+v\n", sbfJson)
+		log.Printf("[DEBUG] handleRFStatus - Parsing RF Status block completed, json to publish: %+v\n", sbfJson)
 	}
 
 	return nil
@@ -1198,10 +1214,6 @@ func handlePosLocal(buffer []byte, sbfJson map[string]interface{}) error {
 	//	"altitude": 5,
 	//}
 	log.Println("[DEBUG] handlePosLocal - Parsing POS Local block")
-
-	log.Printf("[DEBUG] handlePosLocal - Block length: %d\n", len(buffer))
-	log.Printf("[DEBUG] handlePosLocal - Appending response to payloads array")
-
 	var posLocal PosLocal_1_t
 
 	//We have to parse the bytes manually because using the binary.Read option
@@ -1211,7 +1223,7 @@ func handlePosLocal(buffer []byte, sbfJson map[string]interface{}) error {
 	// binary.Read(blockBuffer, binary.LittleEndian, &rfStatus)
 
 	//Block header
-	posLocal.Header.Sync = binary.BigEndian.Uint16(buffer[:2]) //Use BigEndian for the sync field ($@) since it is character data
+	posLocal.Header.Sync = string(buffer[:2])
 	posLocal.Header.CRC = binary.LittleEndian.Uint16(buffer[2:4])
 	posLocal.Header.ID = binary.LittleEndian.Uint16([]byte{buffer[4], (buffer[5] << 3) >> 3})
 	posLocal.Header.Length = binary.LittleEndian.Uint16(buffer[6:8])
@@ -1268,19 +1280,13 @@ func handleReceiverSetup(buffer []byte, sbfJson map[string]interface{}) error {
 
 	log.Println("[DEBUG] handleReceiverSetup - Parsing ReceiverSetup block")
 
-	log.Printf("[DEBUG] handleReceiverSetup - Block length: %d\n", len(buffer))
-	log.Printf("[DEBUG] handleReceiverSetup - Appending response to payloads array")
-
 	var recSetup ReceiverSetup_1_t
 
 	sbfID := binary.LittleEndian.Uint16([]byte{buffer[4], (buffer[5] << 3) >> 3})
-	log.Printf("[DEBUG] handleReceiverSetup - sbfID: %d\n", sbfID)
-
 	version := buffer[5] >> 5
-	log.Printf("[DEBUG] handleReceiverSetup - version: %d\n", version)
 
 	//Block header
-	recSetup.Header.Sync = binary.BigEndian.Uint16(buffer[:2]) //Use BigEndian for the sync field ($@) since it is character data
+	recSetup.Header.Sync = string(buffer[:2])
 	recSetup.Header.CRC = binary.LittleEndian.Uint16(buffer[2:4])
 	recSetup.Header.ID = sbfID
 	recSetup.Header.Length = binary.LittleEndian.Uint16(buffer[6:8])
@@ -1412,13 +1418,10 @@ func handleReceiverStatus(buffer []byte, sbfJson map[string]interface{}) error {
 	//	],
 	//}
 	log.Println("[DEBUG] handleReceiverStatus - Parsing ReceiverSetup block")
-	log.Printf("[DEBUG] handleReceiverStatus - Block length: %d\n", len(buffer))
-	log.Printf("[DEBUG] handleReceiverStatus - Appending response to payloads array")
-
 	var recStatus ReceiverStatus_2_t
 
 	//Block header
-	recStatus.Header.Sync = binary.BigEndian.Uint16(buffer[:2]) //Use BigEndian for the sync field ($@) since it is character data
+	recStatus.Header.Sync = string(buffer[:2])
 	recStatus.Header.CRC = binary.LittleEndian.Uint16(buffer[2:4])
 	recStatus.Header.ID = binary.LittleEndian.Uint16([]byte{buffer[4], (buffer[5] << 3) >> 3})
 	recStatus.Header.Length = binary.LittleEndian.Uint16(buffer[6:8])
@@ -1437,7 +1440,7 @@ func handleReceiverStatus(buffer []byte, sbfJson map[string]interface{}) error {
 	recStatus.CmdCount = buffer[30]
 	recStatus.Temperature = buffer[31]
 
-	log.Printf("[DEBUG] handlePosLocal - ReceiverStatus block parsed into struct: %+v\n", recStatus)
+	log.Printf("[DEBUG] handleReceiverStatus - ReceiverStatus block parsed into struct: %+v\n", recStatus)
 
 	//AGCState
 	for i, ndx := 0, 32; i < int(recStatus.N); i, ndx = i+1, ndx+int(recStatus.SBSize) {
@@ -1706,13 +1709,10 @@ func handleQualityInd(buffer []byte, sbfJson map[string]interface{}) error {
 
 	log.Println("[DEBUG] handleQualityInd - Parsing QualityInd block")
 
-	log.Printf("[DEBUG] handleQualityInd - Block length: %d\n", len(buffer))
-	log.Printf("[DEBUG] handleQualityInd - Appending response to payloads array")
-
 	var qualityInd QualityInd_1_t
 
 	//Block header
-	qualityInd.Header.Sync = binary.BigEndian.Uint16(buffer[:2]) //Use BigEndian for the sync field ($@) since it is character data
+	qualityInd.Header.Sync = string(buffer[:2])
 	qualityInd.Header.CRC = binary.LittleEndian.Uint16(buffer[2:4])
 	qualityInd.Header.ID = binary.LittleEndian.Uint16([]byte{buffer[4], (buffer[5] << 3) >> 3})
 	qualityInd.Header.Length = binary.LittleEndian.Uint16(buffer[6:8])
@@ -1729,16 +1729,14 @@ func handleQualityInd(buffer []byte, sbfJson map[string]interface{}) error {
 		qualityInd.Indicators[i] = binary.LittleEndian.Uint16(buffer[ndx : ndx+2])
 	}
 
-	log.Printf("[DEBUG] handlePosLocal - QualityInd block parsed into struct: %+v\n", qualityInd)
-
-	//Process the data in the QualityInd_1_t struct
+	log.Printf("[DEBUG] handleQualityInd - QualityInd block parsed into struct: %+v\n", qualityInd)
 
 	//Process each AGCState sub-block
 	qIndArr := make([]map[string]interface{}, qualityInd.N)
 	sbfJson["qualityIndicators"] = qIndArr
 
 	for ndx := 0; ndx < int(qualityInd.N); ndx++ {
-		log.Printf("[DEBUG] handleReceiverStatus - quality indicator: %d\n", qualityInd.Indicators[ndx])
+		log.Printf("[DEBUG] handleQualityInd - quality indicator: %d\n", qualityInd.Indicators[ndx])
 
 		qIndArr[ndx] = map[string]interface{}{
 			"type":  (qualityInd.Indicators[ndx] << 8) >> 8,  //Shift left byte out

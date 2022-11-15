@@ -88,8 +88,7 @@ func main() {
 	log.Printf("[INFO] OS signal %s received, ending go routines.", sig)
 
 	//End the existing goRoutines
-	//TODO - This does not appear to be working
-	//endWorkersChannel <- "Stop"
+	endWorkersChannel <- "Stop"
 
 	os.Exit(0)
 }
@@ -212,10 +211,9 @@ func readWorker() {
 		if adapterSettings.ConnectionType == "serial" {
 			port.(serial.Port).Close()
 		} else {
-
-			//TODO - This does not appear to work, the call to close never returns
-			//port.(net.Conn).Close()
+			port.(net.Conn).Close()
 		}
+		os.Exit(0)
 	}()
 
 	for {
@@ -330,7 +328,7 @@ func createTcpPort() error {
 		return err
 	}
 
-	log.Printf("[DEBUG] createSerialPort - TCP port %s opened\n", addr)
+	log.Printf("[DEBUG] createTcpPort - TCP port %s opened\n", addr)
 	return nil
 }
 
@@ -359,7 +357,7 @@ func writeToPort(payload []byte) {
 func writeToSerialPort(bytes []byte) {
 	n, err := port.(serial.Port).Write(bytes)
 	if err != nil {
-		log.Printf("[ERROR] writeToSerialPort - Error writing to serial port: %s\n", err.Error())
+		log.Fatalf("[FATAL] writeToSerialPort - Error writing to serial port: %s\n", err.Error())
 	}
 	log.Printf("[DEBUG] writeToSerialPort - Wrote %d bytes to serial port\n", n)
 }
@@ -367,7 +365,7 @@ func writeToSerialPort(bytes []byte) {
 func writeToTcpPort(bytes []byte) {
 	n, err := port.(net.Conn).Write(bytes)
 	if err != nil {
-		log.Printf("[ERROR] writeToSerialPort - Error writing to tcp port: %s\n", err.Error())
+		log.Fatalf("[FATAL] writeToSerialPort - Error writing to tcp port: %s\n", err.Error())
 	}
 	log.Printf("[DEBUG] writeToSerialPort - Wrote %d bytes to tcp port\n", n)
 }
